@@ -1,0 +1,8 @@
+.DS_Store
+__MACOSX/
+*.log
+Feixiao/build/
+Feixiao/firmware/*.bin
+Feixiao/src/compat/fw_blobs.c
+Feixiao/rtw88.kext/Contents/Resources/*.bin
+Feixiao/rtw88.kext/Contents/MacOS/
