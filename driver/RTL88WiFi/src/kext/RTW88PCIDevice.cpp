@@ -1,3 +1,4 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 // RTW88PCIDevice.cpp — IOEthernetController for PCIe rtw88 adapters
 
@@ -28,7 +29,7 @@ static constexpr unsigned int kRTW88TxResumeAvail = 160;
 /*  PCI ops shim (C linkage, called from driver C code)                */
 /* ------------------------------------------------------------------ */
 
-RTW88HwOps *g_pci_dev_instance = nullptr;  /* ya no static: AirportRTW88 tambien lo setea */
+RTW88HwOps *g_pci_dev_instance = nullptr;  /* ya no static: RTL88WiFi tambien lo setea */
 
 static int compat_pci_read_config_byte(struct pci_dev *dev, int where, u8 *val)
 {

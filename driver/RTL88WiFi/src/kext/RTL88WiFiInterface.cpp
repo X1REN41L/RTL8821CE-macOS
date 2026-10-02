@@ -1,19 +1,20 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
-#include "AirportRTW88Interface.hpp"
+#include "RTL88WiFiInterface.hpp"
 #include <sys/kpi_mbuf.h>
 
 #define super IO80211Interface
 
-OSDefineMetaClassAndStructors(AirportRTW88Interface, IO80211Interface)
+OSDefineMetaClassAndStructors(RTL88WiFiInterface, IO80211Interface)
 
-bool AirportRTW88Interface::init(IONetworkController *controller)
+bool RTL88WiFiInterface::init(IONetworkController *controller)
 {
     if (!super::init(controller))
         return false;
     return true;
 }
 
-UInt32 AirportRTW88Interface::inputPacket(mbuf_t packet, UInt32 length,
+UInt32 RTL88WiFiInterface::inputPacket(mbuf_t packet, UInt32 length,
                                           IOOptionBits options, void *param)
 {
     if (!packet)
@@ -35,7 +36,7 @@ UInt32 AirportRTW88Interface::inputPacket(mbuf_t packet, UInt32 length,
              (uint16_t)eh[13];
 
         if (ethertype == 0x888E) {
-            IOLog("AirportRTW88: forwarding EAPOL to IO80211 len=%zu\n", len);
+            IOLog("RTL88WiFi: forwarding EAPOL to IO80211 len=%zu\n", len);
             return IO80211Interface::inputPacket(
                 packet, (UInt32)mbuf_pkthdr_len(packet), 0, param);
         }

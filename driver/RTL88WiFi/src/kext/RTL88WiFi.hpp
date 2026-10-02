@@ -1,5 +1,6 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
- * AirportRTW88.hpp — IO80211Controller subclass; native Wi-Fi menu support
+ * RTL88WiFi.hpp — IO80211Controller subclass; native Wi-Fi menu support
  * for the rtw88 macOS port (Feixiao), mirroring OpenIntelWireless/itlwm's
  * AirportItlwm.
  *
@@ -7,7 +8,7 @@
  * based, like itlwm.kext), same as AirportItlwm.kext is separate from
  * itlwm.kext. Do not load both against the same PCI device.
  *
- * IOClass in this target's Info.plist should be AirportRTW88, IOProviderClass
+ * IOClass in this target's Info.plist should be RTL88WiFi, IOProviderClass
  * stays IOPCIDevice with the same IOPCIMatch entries as rtw88.kext.
  */
 #pragma once
@@ -97,10 +98,10 @@ static_assert(sizeof(RTW88MCSVHTData) == 20, "MCS/VHT ABI changed");
 static_assert(sizeof(RTW88StaRoamData) == 13, "STA roam ABI changed");
 static_assert(sizeof(RTW88IEData) == 2072, "IE ABI changed");
 
-class AirportRTW88Interface;
+class RTL88WiFiInterface;
 
-class AirportRTW88 : public IO80211Controller, public RTW88EventDelegate, public RTW88RxDelegate, public RTW88HwOps {
-    OSDeclareDefaultStructors(AirportRTW88)
+class RTL88WiFi : public IO80211Controller, public RTW88EventDelegate, public RTW88RxDelegate, public RTW88HwOps {
+    OSDeclareDefaultStructors(RTL88WiFi)
 
 public:
     static void diagnosticsTimerFired(OSObject *owner, IOTimerEventSource *timer);
@@ -141,7 +142,7 @@ public:
      * Selector names/signatures must match the IO80211Family SDK headers
      * (IO80211Controller.h) exactly — check MacKernelSDK version pinned
      * in the repo, this list is representative, not exhaustive. */
-    /* AirPort_RTW88 intentionally targets the Ventura IO80211FamilyLegacy ABI.
+    /* RTL88WiFi intentionally targets the Ventura IO80211FamilyLegacy ABI.
      * On Sonoma/Sequoia/Tahoe the supported configuration restores that same
      * family (plus a matching IOSkywalkFamily), so these entry points must not
      * change behavior based on the host Darwin major. */
@@ -187,6 +188,9 @@ public:
      * no los tenia contemplados en el primer intento). */
     virtual SInt32 stopDMA() override;
     virtual UInt32 hardwareOutputQueueDepth(IO80211Interface*) override;
+    virtual UInt32 getDataQueueDepth(OSObject *) override;
+    virtual IOReturn outputStart(IONetworkInterface *interface, IOOptionBits options) override;
+    void kickGatedOutput();
     virtual SInt32 performCountryCodeOperation(IO80211Interface*, IO80211CountryCodeOp) override;
     virtual SInt32 enableFeature(IO80211FeatureCode, void*) override;
     virtual SInt32 monitorModeSetEnabled(IO80211Interface*, bool, UInt32) override;
@@ -252,6 +256,12 @@ private:
     bool _shutdown = false;
     bool _dmaStopped = false;
     volatile bool _txStalled = false;
+    /* r10/r11: outputStart() left packets in the ifnet send queue because TX
+     * was stalled (BE ring nearly full) or the family BE queue was high. */
+    volatile bool _txGated = false;
+    uint32_t _txGateCount = 0;
+    bool txGateWanted();
+    bool releaseTxStall();
 
     /* 2.0.0: explicit IOKit power-management state.  A hibernation resume
      * restores kernel memory but the PCI function/firmware may be completely
@@ -265,7 +275,7 @@ private:
     IOReturn _pmLastSleepResult = kIOReturnSuccess;
     IOReturn _pmLastWakeResult = kIOReturnSuccess;
     IOPCIDevice           *_pciDev      = nullptr;
-    AirportRTW88Interface  *_netif       = nullptr;
+    RTL88WiFiInterface  *_netif       = nullptr;
     RTW88IEEE80211         *_ieee80211   = nullptr;  /* reused as-is from rtw88 core */
 
     IOTimerEventSource *_diagnosticsTimer = nullptr;
@@ -279,6 +289,7 @@ private:
     bool _diagLastAgg = false;
     bool _diagLastStalled = false;
     bool _diagLastBusy = false;
+    uint32_t _diagLastGateCount = 0;
     bool _diagRingPrimed = false;
     volatile bool _diagnosticsInHardware = false;
     void waitForDiagnosticsIdle();

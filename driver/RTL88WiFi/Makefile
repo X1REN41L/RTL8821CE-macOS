@@ -1,4 +1,5 @@
-# Makefile for rtw88-macos
+# Makefile for RTL88WiFi (derived from the upstream rtw88-macos build)
+.DEFAULT_GOAL := rtl88wifi
 #
 # Prerequisites:
 #   Xcode Command Line Tools
@@ -56,6 +57,8 @@ KEXT_FLAGS   := -fno-exceptions -fno-rtti \
                 -fno-stack-protector -mkernel \
                 -MMD -MP \
                 $(ARCH) $(MINOS) \
+                -ffile-prefix-map=$(PROJ_ROOT)=driver/RTL88WiFi \
+                -fdebug-prefix-map=$(PROJ_ROOT)=driver/RTL88WiFi \
                 -isysroot $(SDK) \
                 -I$(MKSDK)/Headers \
                 -I$(SDK)/System/Library/Frameworks/Kernel.framework/Headers
@@ -321,20 +324,20 @@ clean:
 #   copy it to the USB installer's /usr/local/bin or run from a path.
 # Agregar esto al final del Makefile de Feixiao (antes de la seccion de
 # "Directory creation"), y copiar antes los 4 archivos nuevos a src/kext/:
-#   AirportRTW88.hpp  AirportRTW88.cpp
-#   AirportRTW88Interface.hpp  AirportRTW88Interface.cpp
+#   RTL88WiFi.hpp  RTL88WiFi.cpp
+#   RTL88WiFiInterface.hpp  RTL88WiFiInterface.cpp
 
-AIRPORT_KEXT_SKEL := $(PROJ_ROOT)/AirPort_RTW88.kext
-AIRPORT_OUT_KEXT  := $(OUT_DIR)/AirPort_RTW88.kext
-AIRPORT_OUT_BIN   := $(AIRPORT_OUT_KEXT)/Contents/MacOS/AirPort_RTW88
+AIRPORT_KEXT_SKEL := $(PROJ_ROOT)/RTL88WiFi.kext
+AIRPORT_OUT_KEXT  := $(OUT_DIR)/RTL88WiFi.kext
+AIRPORT_OUT_BIN   := $(AIRPORT_OUT_KEXT)/Contents/MacOS/RTL88WiFi
 
 AIRPORT_KEXT_SRCS := \
     $(KEXT_SRC)/RTW88IEEE80211.cpp \
     $(KEXT_SRC)/RTW88HwOps.cpp \
-    $(KEXT_SRC)/AirportRTW88.cpp \
-    $(KEXT_SRC)/AirportRTW88AWDL.cpp \
+    $(KEXT_SRC)/RTL88WiFi.cpp \
+    $(KEXT_SRC)/RTL88WiFiAWDL.cpp \
     $(KEXT_SRC)/RTW88AWDLManager.cpp \
-    $(KEXT_SRC)/AirportRTW88Interface.cpp
+    $(KEXT_SRC)/RTL88WiFiInterface.cpp
 
 AIRPORT_KEXT_OBJS := $(patsubst $(KEXT_SRC)/%.cpp, $(BUILD_DIR)/airport/%.o, $(AIRPORT_KEXT_SRCS))
 
@@ -347,19 +350,19 @@ AIRPORT_LDFLAGS := \
     $(MKSDK)/Library/x86_64/libkmod.a \
     -Xlinker -undefined -Xlinker dynamic_lookup
 
-.PHONY: airport
-airport: $(AIRPORT_OUT_BIN)
+.PHONY: rtl88wifi
+rtl88wifi: $(AIRPORT_OUT_BIN)
 
 $(AIRPORT_OUT_BIN): $(AIRPORT_ALL_OBJS) $(AIRPORT_KEXT_SKEL)/Contents/Info.plist | $(AIRPORT_OUT_KEXT)/Contents/MacOS
 	@echo "  LD   $(notdir $@)"
 	$(LD) $(AIRPORT_LDFLAGS) -o $@ $(AIRPORT_ALL_OBJS)
 	@echo "  SYNC $(AIRPORT_OUT_KEXT)"
 	rsync -a --exclude='MacOS' $(AIRPORT_KEXT_SKEL)/ $(AIRPORT_OUT_KEXT)/
-	@echo "  OK   build/out/AirPort_RTW88.kext"
+	@echo "  OK   build/out/RTL88WiFi.kext"
 
 $(BUILD_DIR)/airport/%.o: $(KEXT_SRC)/%.cpp | $(BUILD_DIR)/airport
 	@echo "  CXX  $(notdir $<)"
-	$(CXX) $(KEXT_CXXFLAGS) -D__IO80211_TARGET=__MAC_13_0 -DUSE_APPLE_SUPPLICANT=1 -c $< -o $@
+	$(CXX) $(KEXT_CXXFLAGS) -D__IO80211_TARGET=__MAC_13_0 -DUSE_APPLE_SUPPLICANT=1 -D__PRIVATE_SPI__ -c $< -o $@
 
 $(AIRPORT_KMOD_OBJ): $(KEXT_SRC)/kmod_info.c | $(BUILD_DIR)/airport
 	@echo "  CC   airport/kmod_info.c"

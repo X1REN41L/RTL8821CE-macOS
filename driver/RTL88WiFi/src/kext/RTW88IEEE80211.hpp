@@ -1,3 +1,4 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * RTW88IEEE80211.hpp — 802.11 state machine for rtw88 macOS port.
  *
@@ -28,7 +29,7 @@ struct ieee80211_channel;
 struct ieee80211_scan_request;
 struct sk_buff;
 
-/* Eventos async para integracion nativa (AirportRTW88) */
+/* Eventos async para integracion nativa (RTL88WiFi) */
 enum RTW88Event {
     kRTW88EventScanDone,
     kRTW88EventAssocDone,
@@ -48,7 +49,7 @@ class RTW88PCIDevice;
 /* Interfaz de acceso a hardware compartida -- antes _pci_io_ops llamaba
  * directo a metodos de RTW88PCIDevice via g_pci_dev_instance (tipado a
  * esa clase). Ahora cualquiera de los dos kexts (RTW88PCIDevice o
- * AirportRTW88) puede implementarla, y g_pci_dev_instance pasa a ser
+ * RTL88WiFi) puede implementarla, y g_pci_dev_instance pasa a ser
  * de este tipo generico. */
 /* Struct compartida para tracking de buffers DMA -- antes vivia solo
  * adentro de RTW88PCIDevice; ahora la comparten ambas clases. */
@@ -90,7 +91,7 @@ public:
 
 /* Interfaz minima que necesita RTW88IEEE80211 de su "padre" -- antes
  * asumia directamente RTW88PCIDevice, lo cual rompia el link en
- * AirportRTW88 (que no compila esa clase). Ahora cualquiera de los dos
+ * RTL88WiFi (que no compila esa clase). Ahora cualquiera de los dos
  * kexts puede ser el padre con tal de implementar esto. */
 class RTW88RxDelegate {
 public:
@@ -407,6 +408,10 @@ private:
     bool     _eapolTxProtect = false;  /* protect the next EAPOL TX (group M2) */
     uint8_t  _ccmpTxPn[6] = {};
     bool     _rxCcmpIvSkipLogged = false;
+    /* r10: the scan-cache entry of the associated BSS has a TIM element
+     * (beacon-derived). Until it does, beacons from that BSS refresh it while
+     * connected, so CoreWLAN's AP_IE_LIST hidden/broadcast check passes. */
+    volatile bool _curBssTim = false;
     uint32_t _rxUndecryptedProtected = 0;  /* protected data without HW decrypt */
     uint32_t _rxUnprotectedDropped = 0;    /* plaintext data after PTK install */
     uint32_t _rxNonSnapDropped = 0;        /* single MSDU without LLC/SNAP */

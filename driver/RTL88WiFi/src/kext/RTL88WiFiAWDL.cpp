@@ -1,12 +1,13 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
- * AirPort_RTW88 1.0.1 — Ventura IO80211 AWDL/P2P virtual-interface bridge.
+ * RTL88WiFi 1.0.1 — Ventura IO80211 AWDL/P2P virtual-interface bridge.
  *
  * This file deliberately implements only payload ABIs present in the pinned
  * MacKernelSDK. Verified Ventura payload ABIs are handled explicitly. Unknown AWDL/P2P
  * selectors stay unsupported rather than pretending a radio operation completed.
  */
-#include "AirportRTW88.hpp"
-#include "AirportRTW88Interface.hpp"
+#include "RTL88WiFi.hpp"
+#include "RTL88WiFiInterface.hpp"
 #include <net/bpf.h>
 #include <sys/kpi_mbuf.h>
 
@@ -42,9 +43,9 @@ static uint16_t rtw88PreferredAWDLSocialChannel(RTW88IEEE80211 *backend)
     return count ? channels[0].number : 0;
 }
 
-IO80211VirtualInterface *AirportRTW88::createVirtualInterface(ether_addr *addr, UInt role)
+IO80211VirtualInterface *RTL88WiFi::createVirtualInterface(ether_addr *addr, UInt role)
 {
-    IOLog("AirPort_RTW88: createVirtualInterface role=%u\n", role);
+    IOLog("RTL88WiFi: createVirtualInterface role=%u\n", role);
 
     if (role < APPLE80211_VIF_P2P_DEVICE || role > APPLE80211_VIF_AWDL)
         return super::createVirtualInterface(addr, role);
@@ -64,7 +65,7 @@ IO80211VirtualInterface *AirportRTW88::createVirtualInterface(ether_addr *addr, 
         return nullptr;
 
     if (!p2p->init(this, addr, role, rtw88VifRoleName(role))) {
-        IOLog("AirPort_RTW88: P2P virtual interface init failed role=%u\n", role);
+        IOLog("RTL88WiFi: P2P virtual interface init failed role=%u\n", role);
         p2p->release();
         return nullptr;
     }
@@ -72,18 +73,18 @@ IO80211VirtualInterface *AirportRTW88::createVirtualInterface(ether_addr *addr, 
     IO80211VirtualInterface *interface = p2p;
     if (role == APPLE80211_VIF_AWDL && _awdlManager && addr)
         _awdlManager->setLocalAddress(addr->octet);
-    IOLog("AirPort_RTW88: P2P virtual interface created role=%u name=%s class=%s\n",
+    IOLog("RTL88WiFi: P2P virtual interface created role=%u name=%s class=%s\n",
           role, rtw88VifRoleName(role), interface->getMetaClass()->getClassName());
     return interface;
 }
 
-SInt32 AirportRTW88::enableVirtualInterface(IO80211VirtualInterface *interface)
+SInt32 RTL88WiFi::enableVirtualInterface(IO80211VirtualInterface *interface)
 {
     if (!interface)
         return kIOReturnBadArgument;
 
     UInt role = (UInt)interface->getInterfaceRole();
-    IOLog("AirPort_RTW88: enableVirtualInterface role=%u bsd=%s\n",
+    IOLog("RTL88WiFi: enableVirtualInterface role=%u bsd=%s\n",
           role, interface->getBSDName() ? interface->getBSDName() : "?");
 
     SInt32 ret = super::enableVirtualInterface(interface);
@@ -112,13 +113,13 @@ SInt32 AirportRTW88::enableVirtualInterface(IO80211VirtualInterface *interface)
     return kIOReturnSuccess;
 }
 
-SInt32 AirportRTW88::disableVirtualInterface(IO80211VirtualInterface *interface)
+SInt32 RTL88WiFi::disableVirtualInterface(IO80211VirtualInterface *interface)
 {
     if (!interface)
         return kIOReturnBadArgument;
 
     UInt role = (UInt)interface->getInterfaceRole();
-    IOLog("AirPort_RTW88: disableVirtualInterface role=%u bsd=%s\n",
+    IOLog("RTL88WiFi: disableVirtualInterface role=%u bsd=%s\n",
           role, interface->getBSDName() ? interface->getBSDName() : "?");
 
     /* Match AirportItlwm: let IO80211 tear the VIF down first, then publish
@@ -136,7 +137,7 @@ SInt32 AirportRTW88::disableVirtualInterface(IO80211VirtualInterface *interface)
     return kIOReturnSuccess;
 }
 
-SInt32 AirportRTW88::apple80211VirtualRequest(UInt request_type, int request_number,
+SInt32 RTL88WiFi::apple80211VirtualRequest(UInt request_type, int request_number,
                                                IO80211VirtualInterface *interface,
                                                void *data)
 {
@@ -153,7 +154,7 @@ SInt32 AirportRTW88::apple80211VirtualRequest(UInt request_type, int request_num
     return result;
 }
 
-SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_number,
+SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number,
                                                IO80211VirtualInterface *interface,
                                                void *data)
 {
@@ -272,7 +273,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         if (set) {
             if (!_awdlManager) return kIOReturnNotReady;
             _awdlManager->setSyncEnabled(d->enabled != 0);
-            IOLog("AirPort_RTW88: AWDL sync enabled=%d\n", _awdlManager->syncEnabled());
+            IOLog("RTL88WiFi: AWDL sync enabled=%d\n", _awdlManager->syncEnabled());
         } else {
             bzero(d, sizeof(*d));
             d->version = APPLE80211_VERSION;
@@ -302,7 +303,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
             return kIOReturnNotFound;
         uint32_t n = d->name_len < sizeof(d->name) ? d->name_len : (uint32_t)sizeof(d->name);
         if (_awdlManager) _awdlManager->notePeerTrafficRegistration(d->active != 0);
-        IOLog("AirPort_RTW88: AWDL peer traffic registration active=%u name_len=%u peers=%u\n",
+        IOLog("RTL88WiFi: AWDL peer traffic registration active=%u name_len=%u peers=%u\n",
               d->active, n, _awdlManager ? _awdlManager->peerRegistrationCount() : 0);
         return kIOReturnSuccess;
     }
@@ -314,7 +315,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         if (set) {
             IOReturn ret = _awdlManager->setSyncFrameTemplate(d->payload, d->payload_len);
             if (ret == kIOReturnSuccess)
-                IOLog("AirPort_RTW88: AWDL sync template len=%u\n", d->payload_len);
+                IOLog("RTL88WiFi: AWDL sync template len=%u\n", d->payload_len);
             return ret;
         }
         if (!d->payload) return kIOReturnBadArgument;
@@ -338,7 +339,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
          * AirportItlwm fixture confirms their exact offsets. */
         d->unk1 = 45;
         d->unk3 = 0x0062;
-        IOLog("AirPort_RTW88: AWDL HT_CAPABILITY cap=0x%x\n", d->unk3);
+        IOLog("RTL88WiFi: AWDL HT_CAPABILITY cap=0x%x\n", d->unk3);
         return kIOReturnSuccess;
     }
 
@@ -348,7 +349,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
         d->cap = 3263; /* Match AirportItlwm's Ventura legacy path. */
-        IOLog("AirPort_RTW88: AWDL VHT_CAPABILITY cap=%u\n", d->cap);
+        IOLog("RTL88WiFi: AWDL VHT_CAPABILITY cap=%u\n", d->cap);
         return kIOReturnSuccess;
     }
 
@@ -374,7 +375,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
             d->chan_spec[i] = ch;
         }
         d->num_chan_specs = (uint16_t)count;
-        IOLog("AirPort_RTW88: AWDL CHANNELS_INFO count=%u\n", count);
+        IOLog("RTL88WiFi: AWDL CHANNELS_INFO count=%u\n", count);
         return kIOReturnSuccess;
     }
 
@@ -382,7 +383,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         if (!data) return kIOReturnBadArgument;
         auto *d = (apple80211_peer_cache_maximum_size *)data;
         if (set) {
-            IOLog("AirPort_RTW88: AWDL peer cache max requested=%u\n", d->max_peers);
+            IOLog("RTL88WiFi: AWDL peer cache max requested=%u\n", d->max_peers);
             return kIOReturnSuccess;
         }
         bzero(d, sizeof(*d));
@@ -394,7 +395,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
     case APPLE80211_IOC_P2P_ENABLE:
         if (!set) return kIOReturnUnsupported;
         if (_awdlManager) _awdlManager->setP2PEnabled(true);
-        IOLog("AirPort_RTW88: P2P_ENABLE accepted (Ventura opaque ABI)\n");
+        IOLog("RTL88WiFi: P2P_ENABLE accepted (Ventura opaque ABI)\n");
         return kIOReturnSuccess;
 
     case APPLE80211_IOC_P2P_SCAN: {
@@ -407,7 +408,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
             d->ssid_len > APPLE80211_MAX_SSID_LEN ||
             d->num_channels > APPLE80211_MAX_CHANNELS)
             return kIOReturnBadArgument;
-        IOLog("AirPort_RTW88: P2P_SCAN ssid_len=%u channels=%u type=%u phy=0x%x\n",
+        IOLog("RTL88WiFi: P2P_SCAN ssid_len=%u channels=%u type=%u phy=0x%x\n",
               d->ssid_len, d->num_channels, d->scan_type, d->phy_mode);
         return kIOReturnSuccess;
     }
@@ -416,12 +417,12 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         /* AirportItlwm accepts this request. The pinned Ventura SDK does not
          * publish apple80211_p2p_listen_data, so keep the payload opaque. */
         if (!set) return kIOReturnUnsupported;
-        IOLog("AirPort_RTW88: P2P_LISTEN accepted (opaque Ventura ABI)\n");
+        IOLog("RTL88WiFi: P2P_LISTEN accepted (opaque Ventura ABI)\n");
         return kIOReturnSuccess;
 
     case APPLE80211_IOC_P2P_GO_CONF:
         if (!set) return kIOReturnUnsupported;
-        IOLog("AirPort_RTW88: P2P_GO_CONF accepted (opaque Ventura ABI)\n");
+        IOLog("RTL88WiFi: P2P_GO_CONF accepted (opaque Ventura ABI)\n");
         return kIOReturnSuccess;
 
     case APPLE80211_IOC_AWDL_BSSID: {
@@ -479,7 +480,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         if (set) {
             IOReturn r = _awdlManager->setSyncChannelSequence(d, sizeof(*d));
             if (r != kIOReturnSuccess) return r;
-            IOLog("AirPort_RTW88: AWDL sync channel sequence len=%u enc=%u steps=%u dup=%u fill_ch=%u\n",
+            IOLog("RTL88WiFi: AWDL sync channel sequence len=%u enc=%u steps=%u dup=%u fill_ch=%u\n",
                   (unsigned)d->length, (unsigned)d->encoding, (unsigned)d->step_count,
                   (unsigned)d->duplicate_count, (unsigned)d->fill_channel);
             /* Store the Apple sequence exactly. The Realtek PHY is deliberately
@@ -527,7 +528,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
                                         d->availability_window_period,
                                         d->extension_length,
                                         d->synchronization_frame_period);
-            IOLog("AirPort_RTW88: AWDL sync params aw_len=%u aw_period=%u ext=%u sync_period=%u\n",
+            IOLog("RTL88WiFi: AWDL sync params aw_len=%u aw_period=%u ext=%u sync_period=%u\n",
                   d->availability_window_length, d->availability_window_period,
                   d->extension_length, d->synchronization_frame_period);
         } else {
@@ -574,7 +575,7 @@ SInt32 AirportRTW88::handleAWDLVirtualRequest(UInt request_type, int request_num
         break;
     }
 
-    IOLog("AirPort_RTW88: VIF selector=%d unsupported (ABI/transport not implemented)\n",
+    IOLog("RTL88WiFi: VIF selector=%d unsupported (ABI/transport not implemented)\n",
           request_number);
     return kIOReturnUnsupported;
 }
@@ -602,25 +603,25 @@ static int rtw88SendActionFrame(RTW88IEEE80211 *backend, mbuf_t m)
     return ok ? kIOReturnSuccess : kIOReturnError;
 }
 
-int AirportRTW88::outputActionFrame(IO80211Interface *interface, mbuf_t m)
+int RTL88WiFi::outputActionFrame(IO80211Interface *interface, mbuf_t m)
 {
     if (__atomic_load_n(&_dmaStopped,__ATOMIC_ACQUIRE)) {
         if (m) mbuf_freem(m);
         return kIOReturnNotReady;
     }
     (void)interface;
-    IOLog("AirPort_RTW88: infrastructure action TX len=%zu\n", m ? mbuf_pkthdr_len(m) : 0);
+    IOLog("RTL88WiFi: infrastructure action TX len=%zu\n", m ? mbuf_pkthdr_len(m) : 0);
     return rtw88SendActionFrame(_ieee80211, m);
 }
 
-int AirportRTW88::bpfOutputPacket(OSObject *object, UInt dltType, mbuf_t m)
+int RTL88WiFi::bpfOutputPacket(OSObject *object, UInt dltType, mbuf_t m)
 {
     if (__atomic_load_n(&_dmaStopped,__ATOMIC_ACQUIRE)) {
         if (m) mbuf_freem(m);
         return kIOReturnNotReady;
     }
     IO80211VirtualInterface *vif = OSDynamicCast(IO80211VirtualInterface, object);
-    IOLog("AirPort_RTW88: VIF bpfOutput dlt=%u role=%d len=%zu\n",
+    IOLog("RTL88WiFi: VIF bpfOutput dlt=%u role=%d len=%zu\n",
           dltType, vif ? vif->getInterfaceRole() : 0, m ? mbuf_pkthdr_len(m) : 0);
 
     const bool awdl = vif && vif->getInterfaceRole() == APPLE80211_VIF_AWDL;
@@ -656,7 +657,7 @@ int AirportRTW88::bpfOutputPacket(OSObject *object, UInt dltType, mbuf_t m)
     return kIOReturnUnsupported;
 }
 
-void AirportRTW88::requestPacketTx(void *object, UInt options)
+void RTL88WiFi::requestPacketTx(void *object, UInt options)
 {
     if (__atomic_load_n(&_dmaStopped,__ATOMIC_ACQUIRE)) return;
     IO80211VirtualInterface *vif = OSDynamicCast(IO80211VirtualInterface, (OSObject *)object);
@@ -704,9 +705,9 @@ void AirportRTW88::requestPacketTx(void *object, UInt options)
 }
 
 
-void AirportRTW88::awdlTimerFired(OSObject *owner, IOTimerEventSource *)
+void RTL88WiFi::awdlTimerFired(OSObject *owner, IOTimerEventSource *)
 {
-    auto *self = OSDynamicCast(AirportRTW88, owner);
+    auto *self = OSDynamicCast(RTL88WiFi, owner);
     if (!self || !self->_awdlManager ||
         __atomic_load_n(&self->_shutdown,__ATOMIC_ACQUIRE) ||
         __atomic_load_n(&self->_dmaStopped,__ATOMIC_ACQUIRE)) return;

@@ -1,8 +1,9 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * Native IO80211 controller for the RTL8822BE port.
  */
-#include "AirportRTW88.hpp"
-#include "AirportRTW88Interface.hpp"
+#include "RTL88WiFi.hpp"
+#include "RTL88WiFiInterface.hpp"
 #include "RTW88AssocWire.hpp"
 #include "RTW88UserClient.hpp"
 
@@ -30,6 +31,20 @@ extern "C" void rtw88_trigger_interrupt(void);  /* esta si es la unica con exter
  * completion cannot park the IOOutputQueue on a marginal threshold. */
 static constexpr unsigned int kRTW88TxStallAvail  = 96;
 static constexpr unsigned int kRTW88TxResumeAvail = 160;
+
+/* r10: IO80211Interface::outputStart() pulls up to getDataQueueDepth()
+ * packets per access category from the ifnet send queue and pushes them into
+ * the family's 256-entry IOGatedOutputQueue, which tail-drops when full. The
+ * family default depth is 1024, so a saturating upload dropped ~30% of
+ * packets there (UDP included). Pull at most 64 per call and leave packets in
+ * the ifnet queue (AQM + flow advisory) while the BE queue is above 128.
+ * r11: on hardware the queue size never read >= 128 at outputStart() time,
+ * yet ~1% still tail-dropped under multi-stream load, one drop per TX stall:
+ * every drop happens while outputPacket() stalls on a nearly full BE ring
+ * and outputStart() keeps pulling. Gate on the stall itself as well. */
+static constexpr UInt32 kRTW88DataQueueDepth = 64;
+static constexpr UInt32 kRTW88TxQueueHigh    = 128;
+static constexpr UInt32 kRTW88TxQueueLow     = 64;
 
 enum : unsigned long {
     kRTW88PowerStateOff = 0,
@@ -65,40 +80,42 @@ extern "C" void rtw88_airport_tx_resume_trampoline(void)
         g_pci_dev_instance->resumeTxIfStalled();
 }
 
-OSDefineMetaClassAndStructors(AirportRTW88, IO80211Controller)
+OSDefineMetaClassAndStructors(RTL88WiFi, IO80211Controller)
 
-bool AirportRTW88::init(OSDictionary *props)
+bool RTL88WiFi::init(OSDictionary *props)
 {
     return super::init(props);
 }
 
 /* Match AirportItlwm's IO80211Controller lifecycle.  IONetworkController::
- * start() calls this virtual before AirportRTW88::start() continues; using an
+ * start() calls this virtual before RTL88WiFi::start() continues; using an
  * IO80211WorkLoop keeps controller IOCTL/VIF callbacks, our interrupt source
  * and RX injection on the same controller-owned workloop. */
-bool AirportRTW88::createWorkLoop()
+bool RTL88WiFi::createWorkLoop()
 {
     if (_workLoop)
         return true;
     _workLoop = IO80211WorkLoop::workLoop();
-    IOLog("AirPort_RTW88: createWorkLoop IO80211WorkLoop=%p\n", _workLoop);
+    IOLog("RTL88WiFi: createWorkLoop IO80211WorkLoop=%p\n", _workLoop);
     return _workLoop != nullptr;
 }
 
-IOWorkLoop *AirportRTW88::getWorkLoop() const
+IOWorkLoop *RTL88WiFi::getWorkLoop() const
 {
     return _workLoop;
 }
 
-bool AirportRTW88::start(IOService *provider)
+bool RTL88WiFi::start(IOService *provider)
 {
-    setProperty("DriverBuild", "2.0.1-rtl8821ce-final-20261001");
+    setProperty("DriverBuild", "1.0.0-rtl88wifi-r11-20261002");
+    setProperty("STA_R10_TXQ_GATE", kOSBooleanTrue);
+    setProperty("STA_R11_TXQ_STALL_GATE", kOSBooleanTrue);
     setProperty("STA_V19_DARWIN_ENOTSUP_FIX", kOSBooleanTrue);
     setProperty("STA_V20_POWERSAVE_PREFLIGHT_FIX", kOSBooleanTrue);
-    IOLog("AirportRTW88: start\n");
+    IOLog("RTL88WiFi: start\n");
     _pciDev = OSDynamicCast(IOPCIDevice, provider);
     if (!_pciDev) {
-        IOLog("AirportRTW88: provider is not IOPCIDevice\n");
+        IOLog("RTL88WiFi: provider is not IOPCIDevice\n");
         return false;
     }
     if (!super::start(provider)) {
@@ -124,7 +141,7 @@ bool AirportRTW88::start(IOService *provider)
         return failStart(provider, "failed to map BAR2");
     }
     _mmioBase = (volatile void *)_mmioMap->getVirtualAddress();
-    IOLog("AirportRTW88: BAR2 mapped at %p, size 0x%llx\n",
+    IOLog("RTL88WiFi: BAR2 mapped at %p, size 0x%llx\n",
           (void *)_mmioBase, (unsigned long long)_mmioMap->getLength());
 
     /* Instalar callbacks compartidos de compat (mismos que usa RTW88PCIDevice,
@@ -147,7 +164,7 @@ bool AirportRTW88::start(IOService *provider)
     _compatPciDev->resource[2]     = (resource_size_t)_mmioBase;
     _compatPciDev->resource_len[2] = (resource_size_t)_mmioMap->getLength();
 
-    IOLog("AirportRTW88: PCI device %04x:%04x\n",
+    IOLog("RTL88WiFi: PCI device %04x:%04x\n",
           _compatPciDev->vendor, _compatPciDev->device);
 
     /* super::start() has already called our createWorkLoop().  AirportItlwm
@@ -175,15 +192,15 @@ bool AirportRTW88::start(IOService *provider)
 
     IOReturn probeRet = _ieee80211->start();
     if (probeRet != kIOReturnSuccess) {
-        IOLog("AirportRTW88: probe failed (0x%08x)\n", probeRet);
+        IOLog("RTL88WiFi: probe failed (0x%08x)\n", probeRet);
         return failStart(provider, "IEEE80211 start failed");
     }
     _ieeeStarted = true;
 
     _awdlManager = new RTW88AWDLManager;
-    if (!_awdlManager || !_awdlManager->init(_ieee80211, _workLoop, this, &AirportRTW88::awdlTimerFired))
+    if (!_awdlManager || !_awdlManager->init(_ieee80211, _workLoop, this, &RTL88WiFi::awdlTimerFired))
         return failStart(provider, "failed to initialize AWDL/P2P manager");
-    IOLog("AirPort_RTW88: AWDL/P2P manager initialized (1.0.1 partial support)\n");
+    IOLog("RTL88WiFi: AWDL/P2P manager initialized (partial support)\n");
 
     /* AirportItlwm Ventura publishes and selects the medium before
      * attachInterface().  This is deliberately kept in the legacy Ventura
@@ -193,18 +210,18 @@ bool AirportRTW88::start(IOService *provider)
     if (!createMediumTables(&primaryMedium) || !primaryMedium ||
         !setCurrentMedium(primaryMedium) || !setSelectedMedium(primaryMedium))
         return failStart(provider, "failed to publish/select Wi-Fi medium");
-    IOLog("AirPort_RTW88: medium table ready before attachInterface\n");
+    IOLog("RTL88WiFi: medium table ready before attachInterface\n");
 
     /* Let IO80211/IONetworkController prepare and configure the client.
      * Calling init/attach directly bypasses the controller's lifecycle. */
-    IOLog("AirportRTW88: calling attachInterface (AirportItlwm lifecycle, attach=true)\n");
+    IOLog("RTL88WiFi: calling attachInterface (AirportItlwm lifecycle, attach=true)\n");
     /* AirportItlwm passes its member pointer directly.  This matters when
      * attach=true because matching/registration can be synchronous: make the
      * primary interface visible to our callbacks before attachInterface()
      * returns instead of assigning it afterwards from a temporary. */
     if (!attachInterface((IONetworkInterface **)&_netif, true) || !_netif)
         return failStart(provider, "controller attachInterface failed");
-    if (!OSDynamicCast(AirportRTW88Interface, _netif)) {
+    if (!OSDynamicCast(RTL88WiFiInterface, _netif)) {
         detachInterface(_netif, true);
         _netif->release();
         _netif = nullptr;
@@ -225,7 +242,7 @@ bool AirportRTW88::start(IOService *provider)
     IO80211Controller::setLinkStatus(kIONetworkLinkValid);
     registerService();
     _netif->registerService();
-    IOLog("AirPort_RTW88: controller and network interface registered\n");
+    IOLog("RTL88WiFi: controller and network interface registered\n");
 
     // Legacy IO80211 on newer hosts may never request the AWDL interface.
     // Attach on a later workloop turn, after start/publication has completed.
@@ -233,21 +250,21 @@ bool AirportRTW88::start(IOService *provider)
     _awdlManager->scheduleDiscovery();
 
     _diagnosticsBuffer = (char *)IOMalloc(32768);
-    _diagnosticsTimer = IOTimerEventSource::timerEventSource(this, &AirportRTW88::diagnosticsTimerFired);
+    _diagnosticsTimer = IOTimerEventSource::timerEventSource(this, &RTL88WiFi::diagnosticsTimerFired);
     if (!_diagnosticsBuffer || !_diagnosticsTimer ||
         _workLoop->addEventSource(_diagnosticsTimer) != kIOReturnSuccess)
         return failStart(provider, "diagnostics allocation failed");
     setProperty("DiagnosticLogging", kOSBooleanTrue);
     setProperty("DiagnosticLogCapacity", (uint64_t)32767, 32);
     _diagnosticsTimer->setTimeoutMS(1000);
-    IOLog("rtw88: 2.0.1 final diagnostics enabled; skb cb=80; fixes=memory,wpa,gtk,peer,station,firmware,scan-ies,ap-ie-list,link-reason,rx-filter\n");
-    IOLog("AirportRTW88: device started successfully\n");
+    IOLog("RTL88WiFi: 1.0.0 diagnostics enabled; skb cb=80; fixes=memory,wpa,gtk,peer,station,firmware,scan-ies,ap-ie-list,link-reason,rx-filter\n");
+    IOLog("RTL88WiFi: device started successfully\n");
     return true;
 }
 
-void AirportRTW88::diagnosticsTimerFired(OSObject *owner, IOTimerEventSource *timer)
+void RTL88WiFi::diagnosticsTimerFired(OSObject *owner, IOTimerEventSource *timer)
 {
-    AirportRTW88 *self = OSDynamicCast(AirportRTW88, owner);
+    RTL88WiFi *self = OSDynamicCast(RTL88WiFi, owner);
     if (!self || self->_shutdown || !self->_diagnosticsBuffer) return;
     self->_diagnosticsSamples++;
     /* setPowerState runs on the PM thread, not this workloop. Publish the
@@ -269,14 +286,27 @@ void AirportRTW88::diagnosticsTimerFired(OSObject *owner, IOTimerEventSource *ti
         bool busy = rtw88_be_tx_busy() != 0;
         bool backlog = busy && self->_diagLastBusy;
         self->_diagLastBusy = busy;
+        uint32_t gates = self->_txGateCount;
         bool toRing = !self->_diagRingPrimed || stalled || backlog ||
                       state != self->_diagLastState || visible != self->_diagLastVisible ||
                       agg != self->_diagLastAgg || stalled != self->_diagLastStalled ||
+                      gates != self->_diagLastGateCount ||
                       self->_diagnosticsSamples - self->_diagLastRingSample >= kDiagHeartbeatSamples;
+        self->_diagLastGateCount = gates;
         if (toRing) {
-            IOLog("rtw88: DIAG sample=%llu state=%u visible=%d agg=%d rx_frames=%u be_avail=%u stalled=%d\n",
+            IOOutputQueue *oq = self->getOutputQueue();
+            /* r11: the family queue's own drop/stall counters, so drops can
+             * be read from the ring without ioreg. */
+            IONetworkData *qd = oq ? oq->getStatisticsData() : nullptr;
+            const IOOutputQueueStats *qs =
+                (qd && qd->getSize() >= sizeof(IOOutputQueueStats))
+                    ? (const IOOutputQueueStats *)qd->getBuffer() : nullptr;
+            IOLog("rtw88: DIAG sample=%llu state=%u visible=%d agg=%d rx_frames=%u be_avail=%u stalled=%d "
+                  "txq=%u gated=%d gates=%u qdrop=%u qstall=%u\n",
                   self->_diagnosticsSamples, state, visible, agg,
-                  self->_ieee80211->receivedFrameCount(), rtw88_be_tx_avail(), stalled);
+                  self->_ieee80211->receivedFrameCount(), rtw88_be_tx_avail(), stalled,
+                  oq ? oq->getSize() : 0, self->_txGated ? 1 : 0, gates,
+                  qs ? qs->dropCount : 0, qs ? qs->stallCount : 0);
             self->_diagLastRingSample = self->_diagnosticsSamples;
             self->_diagRingPrimed = true;
         } else {
@@ -288,6 +318,11 @@ void AirportRTW88::diagnosticsTimerFired(OSObject *owner, IOTimerEventSource *ti
         self->_diagLastVisible = visible;
         self->_diagLastAgg = agg;
         self->_diagLastStalled = stalled;
+        /* Safety net: a queue flushed without outputPacket() calls, or a ring
+         * reclaimed without a TX-resume callback, must not leave the IO80211
+         * queue stalled or the ifnet output thread waiting on a gate signal. */
+        self->releaseTxStall();
+        self->kickGatedOutput();
         rtw88_debug_dump_tx_state_to(toRing);
     }
     __atomic_store_n(&self->_diagnosticsInHardware, false, __ATOMIC_SEQ_CST);
@@ -301,7 +336,7 @@ void AirportRTW88::diagnosticsTimerFired(OSObject *owner, IOTimerEventSource *ti
     timer->setTimeoutMS(5000);
 }
 
-void AirportRTW88::waitForDiagnosticsIdle()
+void RTL88WiFi::waitForDiagnosticsIdle()
 {
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     for (int i = 0; i < 1000 &&
@@ -309,9 +344,9 @@ void AirportRTW88::waitForDiagnosticsIdle()
         IOSleep(1);
 }
 
-bool AirportRTW88::failStart(IOService *provider, const char *reason)
+bool RTL88WiFi::failStart(IOService *provider, const char *reason)
 {
-    IOLog("AirportRTW88: start failed: %s\n", reason ? reason : "unknown error");
+    IOLog("RTL88WiFi: start failed: %s\n", reason ? reason : "unknown error");
 
     /* Match AirportItlwm/IONetworkController ownership ordering: IO80211 must
      * stop while the controller workloop, interface and backend still exist.
@@ -324,15 +359,15 @@ bool AirportRTW88::failStart(IOService *provider, const char *reason)
     return false;
 }
 
-bool AirportRTW88::setupInterrupt()
+bool RTL88WiFi::setupInterrupt()
 {
     _intrSrc = IOInterruptEventSource::interruptEventSource(
         this,
         OSMemberFunctionCast(IOInterruptEventSource::Action,
-                             this, &AirportRTW88::handleInterrupt),
+                             this, &RTL88WiFi::handleInterrupt),
         _pciDev, 0);
     if (!_intrSrc) {
-        IOLog("AirportRTW88: failed to create interrupt event source\n");
+        IOLog("RTL88WiFi: failed to create interrupt event source\n");
         return false;
     }
     if (_workLoop->addEventSource(_intrSrc) != kIOReturnSuccess) {
@@ -343,7 +378,7 @@ bool AirportRTW88::setupInterrupt()
     return true;
 }
 
-void AirportRTW88::handleInterrupt(IOInterruptEventSource *src, int count)
+void RTL88WiFi::handleInterrupt(IOInterruptEventSource *src, int count)
 {
     (void)src; (void)count;
     /* Controller workloop is a safe thread context. Retire DMA descriptors
@@ -355,14 +390,14 @@ void AirportRTW88::handleInterrupt(IOInterruptEventSource *src, int count)
         rtw88_trigger_interrupt();
 }
 
-UInt8 AirportRTW88::pciReadByte(int offset)   { return _pciDev->configRead8((UInt8)offset); }
-UInt16 AirportRTW88::pciReadWord(int offset)  { return _pciDev->configRead16((UInt8)offset); }
-UInt32 AirportRTW88::pciReadDword(int offset) { return _pciDev->configRead32((UInt8)offset); }
-void AirportRTW88::pciWriteByte(int offset, UInt8 val)   { _pciDev->configWrite8((UInt8)offset, val); }
-void AirportRTW88::pciWriteWord(int offset, UInt16 val)  { _pciDev->configWrite16((UInt8)offset, val); }
-void AirportRTW88::pciWriteDword(int offset, UInt32 val) { _pciDev->configWrite32((UInt8)offset, val); }
+UInt8 RTL88WiFi::pciReadByte(int offset)   { return _pciDev->configRead8((UInt8)offset); }
+UInt16 RTL88WiFi::pciReadWord(int offset)  { return _pciDev->configRead16((UInt8)offset); }
+UInt32 RTL88WiFi::pciReadDword(int offset) { return _pciDev->configRead32((UInt8)offset); }
+void RTL88WiFi::pciWriteByte(int offset, UInt8 val)   { _pciDev->configWrite8((UInt8)offset, val); }
+void RTL88WiFi::pciWriteWord(int offset, UInt16 val)  { _pciDev->configWrite16((UInt8)offset, val); }
+void RTL88WiFi::pciWriteDword(int offset, UInt32 val) { _pciDev->configWrite32((UInt8)offset, val); }
 
-int AirportRTW88::pciFindCapability(int cap)
+int RTL88WiFi::pciFindCapability(int cap)
 {
     if (!_pciDev || cap < 0 || cap > 0xff)
         return 0;
@@ -372,7 +407,7 @@ int AirportRTW88::pciFindCapability(int cap)
     return value ? (int)offset : 0;
 }
 
-void *AirportRTW88::allocCoherent(size_t size, IOPhysicalAddress *phys)
+void *RTL88WiFi::allocCoherent(size_t size, IOPhysicalAddress *phys)
 {
     /* DMA unmaps can be deferred by IRQ/NAPI. Reclaim them whenever allocation
      * returns to a sleepable thread so sustained traffic cannot grow the list. */
@@ -384,7 +419,7 @@ void *AirportRTW88::allocCoherent(size_t size, IOPhysicalAddress *phys)
         kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOMemoryKernelUserShared,
         size,
         0x00000000FFFFFFF0ULL);
-    if (!desc) { IOLog("AirportRTW88: dma alloc failed, size=%zu\n", size); return nullptr; }
+    if (!desc) { IOLog("RTL88WiFi: dma alloc failed, size=%zu\n", size); return nullptr; }
     if (desc->prepare() != kIOReturnSuccess) { desc->release(); return nullptr; }
 
     IOPhysicalAddress pa = desc->getPhysicalAddress();
@@ -404,7 +439,7 @@ void *AirportRTW88::allocCoherent(size_t size, IOPhysicalAddress *phys)
     return va;
 }
 
-void AirportRTW88::freeCoherent(size_t size, void *virt, IOPhysicalAddress phys)
+void RTL88WiFi::freeCoherent(size_t size, void *virt, IOPhysicalAddress phys)
 {
     IOSimpleLockLock(_dmaLock);
     RTW88DMAEntry **prev = &_dmaList;
@@ -424,10 +459,10 @@ void AirportRTW88::freeCoherent(size_t size, void *virt, IOPhysicalAddress phys)
         prev = &e->next;
     }
     IOSimpleLockUnlock(_dmaLock);
-    IOLog("AirportRTW88: freeCoherent: virt %p not found\n", virt);
+    IOLog("RTL88WiFi: freeCoherent: virt %p not found\n", virt);
 }
 
-void AirportRTW88::freeCoherentByPhys(IOPhysicalAddress phys)
+void RTL88WiFi::freeCoherentByPhys(IOPhysicalAddress phys)
 {
     IOSimpleLockLock(_dmaLock);
     RTW88DMAEntry **prev = &_dmaList;
@@ -449,7 +484,7 @@ void AirportRTW88::freeCoherentByPhys(IOPhysicalAddress phys)
     IOSimpleLockUnlock(_dmaLock);
 }
 
-void AirportRTW88::setBounceOrigVA(IOPhysicalAddress phys, void *orig_va)
+void RTL88WiFi::setBounceOrigVA(IOPhysicalAddress phys, void *orig_va)
 {
     IOSimpleLockLock(_dmaLock);
     for (RTW88DMAEntry *e = _dmaList; e; e = e->next) {
@@ -458,7 +493,7 @@ void AirportRTW88::setBounceOrigVA(IOPhysicalAddress phys, void *orig_va)
     IOSimpleLockUnlock(_dmaLock);
 }
 
-void AirportRTW88::syncBounceForCpu(IOPhysicalAddress dma, size_t size)
+void RTL88WiFi::syncBounceForCpu(IOPhysicalAddress dma, size_t size)
 {
     IOSimpleLockLock(_dmaLock);
     for (RTW88DMAEntry *e = _dmaList; e; e = e->next) {
@@ -472,7 +507,7 @@ void AirportRTW88::syncBounceForCpu(IOPhysicalAddress dma, size_t size)
     IOSimpleLockUnlock(_dmaLock);
 }
 
-void AirportRTW88::resumeTxIfStalled()
+void RTL88WiFi::resumeTxIfStalled()
 {
     /* IRQ bottom-half/NAPI run on the ordered compat datapath worker. This is a
      * safe place to retire deferred DMA mappings and kick a deliberately
@@ -480,16 +515,24 @@ void AirportRTW88::resumeTxIfStalled()
     if (preemption_enabled())
         drainPendingFree();
 
+    releaseTxStall();
+    /* After the stall clears, so the gate opens on the same reclaim. */
+    kickGatedOutput();
+}
+
+bool RTL88WiFi::releaseTxStall()
+{
     if (!_txStalled || rtw88_be_tx_avail() < kRTW88TxResumeAvail)
-        return;
+        return false;
 
     _txStalled = false;
     IOOutputQueue *q = getOutputQueue();
     if (q)
         q->service(IOBasicOutputQueue::kServiceAsync);
+    return true;
 }
 
-void AirportRTW88::drainPendingFree()
+void RTL88WiFi::drainPendingFree()
 {
     if (!_pendingFreeLock) return;
     IOSimpleLockLock(_pendingFreeLock);
@@ -503,7 +546,7 @@ void AirportRTW88::drainPendingFree()
     }
 }
 
-void AirportRTW88::releaseDMAEntries()
+void RTL88WiFi::releaseDMAEntries()
 {
     if (!_dmaLock) return;
 
@@ -523,7 +566,7 @@ void AirportRTW88::releaseDMAEntries()
     }
 }
 
-void AirportRTW88::teardown()
+void RTL88WiFi::teardown()
 {
     __atomic_store_n(&_shutdown, true, __ATOMIC_RELEASE);
     if (_diagnosticsTimer) {
@@ -621,7 +664,7 @@ void AirportRTW88::teardown()
     }
 }
 
-IOReturn AirportRTW88::registerWithPolicyMaker(IOService *policyMaker)
+IOReturn RTL88WiFi::registerWithPolicyMaker(IOService *policyMaker)
 {
     if (!policyMaker)
         return kIOReturnBadArgument;
@@ -634,7 +677,7 @@ IOReturn AirportRTW88::registerWithPolicyMaker(IOService *policyMaker)
                                             kRTW88PowerStateCount);
 }
 
-IOReturn AirportRTW88::quiesceForSystemSleep()
+IOReturn RTL88WiFi::quiesceForSystemSleep()
 {
     if (__atomic_exchange_n(&_pmTransition, true, __ATOMIC_ACQ_REL))
         return kIOReturnBusy;
@@ -674,7 +717,7 @@ IOReturn AirportRTW88::quiesceForSystemSleep()
     return _pmLastSleepResult;
 }
 
-IOReturn AirportRTW88::restoreAfterSystemWake()
+IOReturn RTL88WiFi::restoreAfterSystemWake()
 {
     if (__atomic_exchange_n(&_pmTransition, true, __ATOMIC_ACQ_REL))
         return kIOReturnBusy;
@@ -699,7 +742,7 @@ IOReturn AirportRTW88::restoreAfterSystemWake()
     {
         const UInt16 cmd = _pciDev->configRead16(kIOPCIConfigCommand);
         if ((cmd & 0x0006U) != 0x0006U) {
-            IOLog("AirportRTW88: wake failed to restore PCI command bits (0x%04x)\n", cmd);
+            IOLog("RTL88WiFi: wake failed to restore PCI command bits (0x%04x)\n", cmd);
             ret = kIOReturnNotReady;
             goto out;
         }
@@ -742,6 +785,7 @@ IOReturn AirportRTW88::restoreAfterSystemWake()
         _netif->postMessage(APPLE80211_M_POWER_CHANGED);
         IOOutputQueue *q = getOutputQueue();
         if (q) q->service(IOBasicOutputQueue::kServiceAsync);
+        kickGatedOutput();
     }
 
 out:
@@ -758,7 +802,7 @@ out:
     return ret;
 }
 
-IOReturn AirportRTW88::setPowerState(unsigned long powerStateOrdinal, IOService *whatDevice)
+IOReturn RTL88WiFi::setPowerState(unsigned long powerStateOrdinal, IOService *whatDevice)
 {
     (void)whatDevice;
     if (powerStateOrdinal >= kRTW88PowerStateCount)
@@ -777,12 +821,12 @@ IOReturn AirportRTW88::setPowerState(unsigned long powerStateOrdinal, IOService 
      * machine's sleep/wake transition. */
     _pmPowerState = powerStateOrdinal;
     if (ret != kIOReturnSuccess)
-        IOLog("AirportRTW88: PM transition to state %lu failed 0x%x\n",
+        IOLog("RTL88WiFi: PM transition to state %lu failed 0x%x\n",
               powerStateOrdinal, ret);
     return IOPMAckImplied;
 }
 
-void AirportRTW88::stop(IOService *provider)
+void RTL88WiFi::stop(IOService *provider)
 {
     /* AirportItlwm calls IO80211Controller::stop() before releasing its
      * workloop/HAL/interface state. Keep the same ordering here so superclass
@@ -794,16 +838,16 @@ void AirportRTW88::stop(IOService *provider)
     teardown();
 }
 
-void AirportRTW88::free()
+void RTL88WiFi::free()
 {
     teardown();
     super::free();
 }
 
-const OSString *AirportRTW88::newVendorString() const { return OSString::withCString("Apple"); }
-const OSString *AirportRTW88::newModelString() const  { return OSString::withCString("802.11ac"); }
+const OSString *RTL88WiFi::newVendorString() const { return OSString::withCString("Apple"); }
+const OSString *RTL88WiFi::newModelString() const  { return OSString::withCString("802.11ac"); }
 
-IOReturn AirportRTW88::enable(IONetworkInterface *iface)
+IOReturn RTL88WiFi::enable(IONetworkInterface *iface)
 {
     if (!_ieee80211 || __atomic_load_n(&_shutdown, __ATOMIC_ACQUIRE) ||
         __atomic_load_n(&_pmTransition, __ATOMIC_ACQUIRE) ||
@@ -830,12 +874,13 @@ IOReturn AirportRTW88::enable(IONetworkInterface *iface)
         _txStalled = false;
         IOOutputQueue *q = getOutputQueue();
         if (q) q->service(IOBasicOutputQueue::kServiceAsync);
+        kickGatedOutput();
     }
-    IOLog("AirportRTW88: IO80211 enable result=0x%x\n", ret);
+    IOLog("RTL88WiFi: IO80211 enable result=0x%x\n", ret);
     return ret;
 }
 
-IOReturn AirportRTW88::disable(IONetworkInterface *iface)
+IOReturn RTL88WiFi::disable(IONetworkInterface *iface)
 {
     /* Keep the IO80211 service published, but actually quiesce the Realtek
      * radio.  v51 left firmware/DMA association state alive across an IO80211
@@ -848,13 +893,13 @@ IOReturn AirportRTW88::disable(IONetworkInterface *iface)
     IOReturn powerRet = kIOReturnSuccess;
     if (_ieee80211) powerRet = _ieee80211->cmdPowerOff();
     (void)setLinkStatus(kIONetworkLinkValid | kIONetworkLinkNoNetworkChange);
-    IOLog("AirportRTW88: IO80211 disable result=0x%x radio-off=0x%x\n", ret, powerRet);
+    IOLog("RTL88WiFi: IO80211 disable result=0x%x radio-off=0x%x\n", ret, powerRet);
     if (ret == kIOReturnSuccess && powerRet != kIOReturnSuccess)
         return powerRet;
     return ret;
 }
 
-IOReturn AirportRTW88::getPacketFilters(const OSSymbol *group, UInt32 *filters) const
+IOReturn RTL88WiFi::getPacketFilters(const OSSymbol *group, UInt32 *filters) const
 {
     if (!group || !filters) return kIOReturnBadArgument;
     if (group == gIONetworkFilterGroup) {
@@ -865,14 +910,14 @@ IOReturn AirportRTW88::getPacketFilters(const OSSymbol *group, UInt32 *filters) 
     return IOEthernetController::getPacketFilters(group, filters);
 }
 
-IOReturn AirportRTW88::setMulticastMode(bool active)
+IOReturn RTL88WiFi::setMulticastMode(bool active)
 {
     IOReturn ret = _ieee80211 ? _ieee80211->setReceiveMulticast(active) : kIOReturnNotReady;
-    IOLog("AirportRTW88: multicast active=%d result=0x%x\n", active, ret);
+    IOLog("RTL88WiFi: multicast active=%d result=0x%x\n", active, ret);
     return ret;
 }
 
-IOReturn AirportRTW88::setMulticastList(IOEthernetAddress *addrs, UInt32 count)
+IOReturn RTL88WiFi::setMulticastList(IOEthernetAddress *addrs, UInt32 count)
 {
     if (count && !addrs) return kIOReturnBadArgument;
     /* rtw88 configure_filter supports all-multicast, not an address table.
@@ -880,7 +925,7 @@ IOReturn AirportRTW88::setMulticastList(IOEthernetAddress *addrs, UInt32 count)
     return setMulticastMode(count != 0);
 }
 
-IOReturn AirportRTW88::setPromiscuousMode(bool active)
+IOReturn RTL88WiFi::setPromiscuousMode(bool active)
 {
     /* Match AirportItlwm's IO80211 contract.  rtw88's normal STA receive
      * filter remains authoritative; this callback must not abort IO80211 setup. */
@@ -888,7 +933,7 @@ IOReturn AirportRTW88::setPromiscuousMode(bool active)
     return kIOReturnSuccess;
 }
 
-bool AirportRTW88::createMediumTables(const IONetworkMedium **primary)
+bool RTL88WiFi::createMediumTables(const IONetworkMedium **primary)
 {
     /* AirportItlwm Ventura publishes the medium dictionary before
      * attachInterface().  Keep the same IO80211 lifecycle so the interface
@@ -914,35 +959,35 @@ bool AirportRTW88::createMediumTables(const IONetworkMedium **primary)
     return ok;
 }
 
-IONetworkInterface *AirportRTW88::createInterface()
+IONetworkInterface *RTL88WiFi::createInterface()
 {
-    IOLog("AirportRTW88: createInterface entered (controller workloop=%p)\n",
+    IOLog("RTL88WiFi: createInterface entered (controller workloop=%p)\n",
           getWorkLoop());
-    AirportRTW88Interface *interface = OSTypeAlloc(AirportRTW88Interface);
+    RTL88WiFiInterface *interface = OSTypeAlloc(RTL88WiFiInterface);
     if (!interface) {
-        IOLog("AirportRTW88: createInterface allocation failed\n");
+        IOLog("RTL88WiFi: createInterface allocation failed\n");
         return nullptr;
     }
     if (!interface->init(this)) {
-        IOLog("AirportRTW88: createInterface IO80211Interface::init failed\n");
+        IOLog("RTL88WiFi: createInterface IO80211Interface::init failed\n");
         interface->release();
         return nullptr;
     }
-    IOLog("AirportRTW88: createInterface initialized\n");
+    IOLog("RTL88WiFi: createInterface initialized\n");
     return interface;
 }
 
-bool AirportRTW88::configureInterface(IONetworkInterface *iface)
+bool RTL88WiFi::configureInterface(IONetworkInterface *iface)
 {
     /* Match AirportItlwm Ventura: IO80211/IONetworkController performs the
      * interface configuration.  The medium table is published in start()
      * before attachInterface(), not created during the attach callback. */
     bool ok = super::configureInterface(iface);
-    IOLog("AirportRTW88: configureInterface super=%d\n", ok);
+    IOLog("RTL88WiFi: configureInterface super=%d\n", ok);
     return ok;
 }
 
-IOReturn AirportRTW88::selectMedium(const IONetworkMedium *medium)
+IOReturn RTL88WiFi::selectMedium(const IONetworkMedium *medium)
 {
     if (!medium)
         return kIOReturnBadArgument;
@@ -950,14 +995,14 @@ IOReturn AirportRTW88::selectMedium(const IONetworkMedium *medium)
     return kIOReturnSuccess;
 }
 
-UInt32 AirportRTW88::getFeatures() const
+UInt32 RTL88WiFi::getFeatures() const
 {
     /* Preserve IONetworkController feature flags. IO80211-specific 802.11n
      * negotiation is handled by enableFeature(), as in AirportItlwm. */
     return super::getFeatures();
 }
 
-UInt32 AirportRTW88::outputPacket(mbuf_t m, void *param)
+UInt32 RTL88WiFi::outputPacket(mbuf_t m, void *param)
 {
     (void)param;
     if (__atomic_load_n(&_pmTransition, __ATOMIC_ACQUIRE) ||
@@ -967,6 +1012,7 @@ UInt32 AirportRTW88::outputPacket(mbuf_t m, void *param)
     }
     if (__atomic_load_n(&_dmaStopped, __ATOMIC_ACQUIRE) || !_ieee80211) {
         if (m) mbuf_freem(m);
+        kickGatedOutput();
         return kIOReturnOutputDropped;
     }
 
@@ -996,17 +1042,18 @@ UInt32 AirportRTW88::outputPacket(mbuf_t m, void *param)
     if (ifp)
         ifnet_stat_increment_out(ifp, ret == kIOReturnOutputSuccess ? 1 : 0, 0,
                                  ret == kIOReturnOutputSuccess ? 0 : 1);
+    kickGatedOutput();
     return ret;
 }
 
-IOReturn AirportRTW88::getHardwareAddress(IOEthernetAddress *addr)
+IOReturn RTL88WiFi::getHardwareAddress(IOEthernetAddress *addr)
 {
     if (!addr || !_ieee80211) return kIOReturnNotReady;
     _ieee80211->getMACAddress(addr->bytes);
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::setHardwareAddress(const IOEthernetAddress *addr)
+IOReturn RTL88WiFi::setHardwareAddress(const IOEthernetAddress *addr)
 {
     if (!addr || !_ieee80211)
         return kIOReturnBadArgument;
@@ -1018,16 +1065,16 @@ IOReturn AirportRTW88::setHardwareAddress(const IOEthernetAddress *addr)
     IOReturn ret = _ieee80211->setMACAddress(addr->bytes);
     if (ret == kIOReturnSuccess) {
         memcpy(_macAddr.bytes, addr->bytes, sizeof(_macAddr.bytes));
-        IOLog("AirPort_RTW88: station MAC updated to %02x:%02x:%02x:%02x:%02x:%02x\n",
+        IOLog("RTL88WiFi: station MAC updated to %02x:%02x:%02x:%02x:%02x:%02x\n",
               addr->bytes[0], addr->bytes[1], addr->bytes[2],
               addr->bytes[3], addr->bytes[4], addr->bytes[5]);
     } else {
-        IOLog("AirPort_RTW88: station MAC update failed ret=0x%x\n", ret);
+        IOLog("RTL88WiFi: station MAC update failed ret=0x%x\n", ret);
     }
     return ret;
 }
 
-IOReturn AirportRTW88::getHardwareAddressForInterface(IO80211Interface *iface,
+IOReturn RTL88WiFi::getHardwareAddressForInterface(IO80211Interface *iface,
                                                        IOEthernetAddress *addr)
 {
     (void)iface;
@@ -1046,7 +1093,7 @@ IOReturn AirportRTW88::getHardwareAddressForInterface(IO80211Interface *iface,
  * the restored Legacy/Skywalk stack.
  */
 namespace {
-static bool rtw88TryHostAssociation(AirportRTW88 *self, IO80211Interface *interface,
+static bool rtw88TryHostAssociation(RTL88WiFi *self, IO80211Interface *interface,
                                     apple80211req *req, SInt32 *result)
 {
     if (!req->req_data || !RTW88AssocWire::supportedRequestSize(req->req_len)) return false;
@@ -1077,9 +1124,9 @@ static bool rtw88TryHostAssociation(AirportRTW88 *self, IO80211Interface *interf
 }
 
 namespace {
-static bool rtw88TryAssocFromSplitWrapper(AirportRTW88 *, IO80211Interface *, void *, SInt32 *);
+static bool rtw88TryAssocFromSplitWrapper(RTL88WiFi *, IO80211Interface *, void *, SInt32 *);
 }
-SInt32 AirportRTW88::apple80211_ioctl(IO80211Interface *interface,
+SInt32 RTL88WiFi::apple80211_ioctl(IO80211Interface *interface,
                                       IO80211VirtualInterface *virtualInterface,
                                       ifnet_t net, unsigned long cmd,
                                       void *data)
@@ -1198,7 +1245,7 @@ SInt32 AirportRTW88::apple80211_ioctl(IO80211Interface *interface,
             _powerSaveLevel = (UInt32)reqVal;
             setProperty("STA_V20_POWERSAVE_SET", kOSBooleanTrue);
             setProperty("STA_V20_POWERSAVE_VALUE", (uint64_t)_powerSaveLevel, 32);
-            IOLog("AirPort_RTW88: v20 zero-len POWERSAVE SET value=%u accepted\n",
+            IOLog("RTL88WiFi: v20 zero-len POWERSAVE SET value=%u accepted\n",
                   (unsigned)_powerSaveLevel);
             return 0;
         }
@@ -1343,7 +1390,7 @@ static void rtw88CaptureSplitTrace(const void *data, RTW88SplitTraceSnapshot *ou
     bzero(out, sizeof(*out));
 }
 
-static void rtw88PublishSplitTrace(AirportRTW88 *self,
+static void rtw88PublishSplitTrace(RTL88WiFi *self,
                                    const RTW88SplitTraceSnapshot &snap,
                                    uint32_t path, SInt32 superRet)
 {
@@ -1429,7 +1476,7 @@ static bool rtw88AssocPayloadLooksValid(const apple80211_assoc_data *d)
     return true;
 }
 
-static bool rtw88TryAssocFromSplitWrapper(AirportRTW88 *self,
+static bool rtw88TryAssocFromSplitWrapper(RTL88WiFi *self,
                                            IO80211Interface *interface,
                                            void *data,
                                            SInt32 *result)
@@ -1460,7 +1507,7 @@ static bool rtw88TryAssocFromSplitWrapper(AirportRTW88 *self,
 }
 }
 
-SInt32 AirportRTW88::apple80211_ioctl_set(IO80211Interface *interface,
+SInt32 RTL88WiFi::apple80211_ioctl_set(IO80211Interface *interface,
                                            IO80211VirtualInterface *virtualInterface,
                                            IO80211SkywalkInterface *skywalkInterface,
                                            void *data)
@@ -1486,7 +1533,7 @@ SInt32 AirportRTW88::apple80211_ioctl_set(IO80211Interface *interface,
                 setProperty("STA_V20_POWERSAVE_SET", kOSBooleanTrue);
                 setProperty("STA_V20_POWERSAVE_VALUE", (uint64_t)_powerSaveLevel, 32);
                 setProperty("STA_V20_POWERSAVE_SET_COUNT", (uint64_t)n, 32);
-                IOLog("AirPort_RTW88: v20 split POWERSAVE SET value=%u accepted (count=%u)\n",
+                IOLog("RTL88WiFi: v20 split POWERSAVE SET value=%u accepted (count=%u)\n",
                       (unsigned)_powerSaveLevel, (unsigned)n);
                 return 0;
             }
@@ -1536,7 +1583,7 @@ SInt32 AirportRTW88::apple80211_ioctl_set(IO80211Interface *interface,
     return sr;
 }
 
-SInt32 AirportRTW88::apple80211_ioctl_set(IO80211SkywalkInterface *skywalkInterface,
+SInt32 RTL88WiFi::apple80211_ioctl_set(IO80211SkywalkInterface *skywalkInterface,
                                            void *data)
 {
     setProperty("STA_SPLIT_ASSOC_SKYWALK_INGRESS", kOSBooleanTrue);
@@ -1573,7 +1620,7 @@ SInt32 AirportRTW88::apple80211_ioctl_set(IO80211SkywalkInterface *skywalkInterf
 /* Native IO80211 request payloads; compared against AirportItlwm v2.2.0
  * Ventura's apple80211Request dispatcher.  The BSD wrapper above is only a
  * transport fallback when the restored family does not dispatch a request. */
-SInt32 AirportRTW88::apple80211Request(unsigned int request_type,
+SInt32 RTL88WiFi::apple80211Request(unsigned int request_type,
                                         int request_number,
                                         IO80211Interface *interface,
                                         void *data)
@@ -1585,7 +1632,7 @@ SInt32 AirportRTW88::apple80211Request(unsigned int request_type,
         setProperty("NATIVE_ASSOCIATE_SEEN", kOSBooleanTrue);
         __atomic_add_fetch(&_nativeAssocDispatchCount, 1U, __ATOMIC_RELAXED);
     }
-    kprintf("AirPort_RTW88: apple80211Request type=0x%x selector=%d data=%p\n",
+    kprintf("RTL88WiFi: apple80211Request type=0x%x selector=%d data=%p\n",
             request_type, request_number, data);
 
     if (!_ieee80211) return kIOReturnNotReady;
@@ -1599,7 +1646,7 @@ SInt32 AirportRTW88::apple80211Request(unsigned int request_type,
      * still records every request). */
     if (isSet && request_number != APPLE80211_IOC_SCAN_REQ &&
         request_number != APPLE80211_IOC_SCAN_REQ_MULTIPLE)
-        IOLog("AirportRTW88: IOCTL SET selector=%d\n", request_number);
+        IOLog("RTL88WiFi: IOCTL SET selector=%d\n", request_number);
 
     // COUNTRY_CODE_CHANGED synchronously requests COUNTRY_CODE again.
     // Keep both invocations outside the large general-purpose switch frame.
@@ -1616,7 +1663,7 @@ SInt32 AirportRTW88::apple80211Request(unsigned int request_type,
 /* r7: the GETs airportd uses to judge the current link are logged to the
  * diagnostic ring only when their result or value changes, so join/leave
  * transitions become visible without the polling noise removed in r3. */
-void AirportRTW88::logGetResult(int request_number, SInt32 ret, const void *data)
+void RTL88WiFi::logGetResult(int request_number, SInt32 ret, const void *data)
 {
     int slot;
     switch (request_number) {
@@ -1660,13 +1707,13 @@ void AirportRTW88::logGetResult(int request_number, SInt32 ret, const void *data
     const uint64_t sig = ((uint64_t)(uint32_t)ret << 32) ^ ((uint64_t)a << 16) ^ b;
     if (_getDiagLast[slot] == sig) return;
     _getDiagLast[slot] = sig;
-    IOLog("AirportRTW88: GET selector=%d ret=0x%x a=%u b=0x%x state=%d visible=%d\n",
+    IOLog("RTL88WiFi: GET selector=%d ret=0x%x a=%u b=0x%x state=%d visible=%d\n",
           request_number, (unsigned)ret, a, b,
           _ieee80211 ? (int)_ieee80211->rawState() : -1,
           _ieee80211 ? (int)_ieee80211->associatedVisible() : -1);
 }
 
-__attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
+__attribute__((__noinline__)) SInt32 RTL88WiFi::handleNativeRequest(
     unsigned int request_type, int request_number, IO80211Interface *interface, void *data)
 {
     const bool isSet = request_type == SIOCSA80211;
@@ -1702,7 +1749,7 @@ __attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
          * running.  Do not surface EBUSY: keep the active scan and let its
          * SCAN_DONE satisfy the coalesced request. */
         if (_scanInProgress) {
-            IOLog("AirPort_RTW88: SCAN_REQ_MULTIPLE coalesced with active scan\n");
+            IOLog("RTL88WiFi: SCAN_REQ_MULTIPLE coalesced with active scan\n");
             return kIOReturnSuccess;
         }
         {
@@ -1717,7 +1764,7 @@ __attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
                  * cache; disconnected scans still perform real RF scanning. */
                 _scanCursor = 0;
                 UInt32 result = 0;
-                kprintf("AirPort_RTW88: SCAN_REQ_MULTIPLE connected cache-only completion\n");
+                kprintf("RTL88WiFi: SCAN_REQ_MULTIPLE connected cache-only completion\n");
                 _netif->postMessage(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
                 return kIOReturnSuccess;
             }
@@ -1814,7 +1861,7 @@ __attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
         static bool capsLogged = false;
         if (!capsLogged) {
             capsLogged = true;
-            IOLog("AirPort_RTW88: CARD_CAPABILITIES AirportItlwm v2.2.0 profile advertised\n");
+            IOLog("RTL88WiFi: CARD_CAPABILITIES AirportItlwm v2.2.0 profile advertised\n");
         }
         return kIOReturnSuccess;
     }
@@ -2028,7 +2075,7 @@ __attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
         if (request_number == APPLE80211_IOC_DRIVER_VERSION) {
             char label[sizeof(d->string)] = {};
             strlcpy(label, chip, sizeof(label));
-            strlcat(label, " (AirPort_RTW88 2.0.0)", sizeof(label));
+            strlcat(label, " (RTL88WiFi 1.0.0)", sizeof(label));
             d->string_len = (uint16_t)strlcpy(d->string, label, sizeof(d->string));
         } else {
             d->string_len = (uint16_t)strlcpy(d->string, chip, sizeof(d->string));
@@ -2076,7 +2123,7 @@ __attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
 
     case APPLE80211_IOC_CURRENT_NETWORK:
         if (isSet) return kIOReturnUnsupported;
-        kprintf("AirPort_RTW88: CURRENT_NETWORK dispatcher entry\n");
+        kprintf("RTL88WiFi: CURRENT_NETWORK dispatcher entry\n");
         return handleCURRENT_NETWORK(static_cast<apple80211_scan_result *>(data));
 
     case APPLE80211_IOC_STATE:
@@ -2190,7 +2237,7 @@ __attribute__((__noinline__)) SInt32 AirportRTW88::handleNativeRequest(
  * stack on that nested path. Keep large scratch buffers in non-inlined
  * handlers so unrelated requests, including country GET/SET, stay small.
  */
-__attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestPHY_MODE(bool isSet, void *data)
+__attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestPHY_MODE(bool isSet, void *data)
 {
         if (isSet) return kIOReturnUnsupported;
         auto *d = static_cast<apple80211_phymode_data *>(data);
@@ -2235,7 +2282,7 @@ __attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestPHY_MODE(bool 
         return kIOReturnSuccess;
     }
 
-__attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestRATE(bool isSet, void *data)
+__attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestRATE(bool isSet, void *data)
 {
         if (isSet) return kIOReturnUnsupported;
         RTW88StateResult st = {};
@@ -2266,7 +2313,7 @@ __attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestRATE(bool isSe
         return kIOReturnSuccess;
     }
 
-__attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestRATE_SET(bool isSet, void *data)
+__attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestRATE_SET(bool isSet, void *data)
 {
         if (isSet) return kIOReturnUnsupported;
         RTW88StateResult st = {};
@@ -2294,7 +2341,7 @@ __attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestRATE_SET(bool 
         return kIOReturnSuccess;
     }
 
-__attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestCHANNELS_INFO(bool isSet, void *data)
+__attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestCHANNELS_INFO(bool isSet, void *data)
 {
         if (isSet || !data) return kIOReturnUnsupported;
         auto *d = static_cast<apple80211_channels_info *>(data);
@@ -2320,7 +2367,7 @@ __attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestCHANNELS_INFO(
         return kIOReturnSuccess;
     }
 
-__attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestHW_SUPPORTED_CHANNELS(bool isSet, void *data)
+__attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestHW_SUPPORTED_CHANNELS(bool isSet, void *data)
 {
         if (isSet) return kIOReturnUnsupported;
         RTW88Channel channels[APPLE80211_MAX_CHANNELS] = {};
@@ -2339,7 +2386,7 @@ __attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestHW_SUPPORTED_C
         return kIOReturnSuccess;
     }
 
-__attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestCOUNTRY_CODE(bool isSet, void *data)
+__attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestCOUNTRY_CODE(bool isSet, void *data)
 {
         auto *d = static_cast<apple80211_country_code_data *>(data);
         if (isSet) {
@@ -2358,7 +2405,7 @@ __attribute__((__noinline__)) IOReturn AirportRTW88::handleRequestCOUNTRY_CODE(b
         return kIOReturnSuccess;
     }
 
-bool AirportRTW88::ensureAWDLVirtualInterface()
+bool RTL88WiFi::ensureAWDLVirtualInterface()
 {
     if (!_awdlManager || !_netif)
         return false;
@@ -2378,14 +2425,14 @@ bool AirportRTW88::ensureAWDLVirtualInterface()
     addr.octet[5] ^= 0x80u;
 
     IO80211VirtualInterface *created = nullptr;
-    IOLog("AirPort_RTW88: proactively attaching AWDL VIF mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+    IOLog("RTL88WiFi: proactively attaching AWDL VIF mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
           addr.octet[0], addr.octet[1], addr.octet[2], addr.octet[3], addr.octet[4], addr.octet[5]);
     bool ok = attachVirtualInterface(&created, &addr, APPLE80211_VIF_AWDL, true);
     if (!ok || !created) {
-        IOLog("AirPort_RTW88: proactive attachVirtualInterface(AWDL) failed\n");
+        IOLog("RTL88WiFi: proactive attachVirtualInterface(AWDL) failed\n");
         return false;
     }
-    IOLog("AirPort_RTW88: proactive AWDL VIF attached bsd=%s role=%u\n",
+    IOLog("RTL88WiFi: proactive AWDL VIF attached bsd=%s role=%u\n",
           created->getBSDName() ? created->getBSDName() : "?",
           (unsigned)created->getInterfaceRole());
 
@@ -2396,7 +2443,7 @@ bool AirportRTW88::ensureAWDLVirtualInterface()
      * This is intentionally non-fatal: STA must remain usable even if the
      * private IO80211 VIF lifecycle rejects the transition. */
     SInt32 enableRet = enableVirtualInterface(created);
-    IOLog("AirPort_RTW88: proactive AWDL enable result=0x%x bsd=%s\n",
+    IOLog("RTL88WiFi: proactive AWDL enable result=0x%x bsd=%s\n",
           (unsigned)enableRet, created->getBSDName() ? created->getBSDName() : "?");
     if (enableRet != kIOReturnSuccess) {
         // An attached BSD object is not an enabled AWDL transport.
@@ -2407,7 +2454,7 @@ bool AirportRTW88::ensureAWDLVirtualInterface()
     return true;
 }
 
-IOReturn AirportRTW88::handleVIRTUAL_IF_CREATE(struct apple80211_virt_if_create_data *d)
+IOReturn RTL88WiFi::handleVIRTUAL_IF_CREATE(struct apple80211_virt_if_create_data *d)
 {
     if (!d || d->version != APPLE80211_VERSION)
         return kIOReturnBadArgument;
@@ -2428,12 +2475,12 @@ IOReturn AirportRTW88::handleVIRTUAL_IF_CREATE(struct apple80211_virt_if_create_
         const char *name = existing->getBSDName();
         bzero(d->bsd_name, sizeof(d->bsd_name));
         if (name) strlcpy((char *)d->bsd_name, name, sizeof(d->bsd_name));
-        IOLog("AirPort_RTW88: VIRTUAL_IF_CREATE role=%u already exists bsd=%s\n",
+        IOLog("RTL88WiFi: VIRTUAL_IF_CREATE role=%u already exists bsd=%s\n",
               d->role, name ? name : "?");
         return kIOReturnSuccess;
     }
 
-    IOLog("AirPort_RTW88: VIRTUAL_IF_CREATE role=%u mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+    IOLog("RTL88WiFi: VIRTUAL_IF_CREATE role=%u mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
           d->role, d->mac[0], d->mac[1], d->mac[2], d->mac[3], d->mac[4], d->mac[5]);
 
     /* Match AirportItlwm's lifecycle: let IO80211 perform the full
@@ -2441,7 +2488,7 @@ IOReturn AirportRTW88::handleVIRTUAL_IF_CREATE(struct apple80211_virt_if_create_
      * then enableVirtualInterface(), and eventually yields p2p0/awdl0. */
     IO80211VirtualInterface *created = nullptr;
     if (!attachVirtualInterface(&created, &addr, d->role, true) || !created) {
-        IOLog("AirPort_RTW88: attachVirtualInterface failed role=%u\n", d->role);
+        IOLog("RTL88WiFi: attachVirtualInterface failed role=%u\n", d->role);
         return kIOReturnError;
     }
     _awdlManager->setVirtualInterface(d->role, created);
@@ -2450,12 +2497,12 @@ IOReturn AirportRTW88::handleVIRTUAL_IF_CREATE(struct apple80211_virt_if_create_
     bzero(d->bsd_name, sizeof(d->bsd_name));
     if (name) strlcpy((char *)d->bsd_name, name, sizeof(d->bsd_name));
 
-    IOLog("AirPort_RTW88: VIRTUAL_IF_CREATE success role=%u bsd=%s\n",
+    IOLog("RTL88WiFi: VIRTUAL_IF_CREATE success role=%u bsd=%s\n",
           d->role, name ? name : "?");
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleVIRTUAL_IF_DELETE(struct apple80211_virt_if_delete_data *d)
+IOReturn RTL88WiFi::handleVIRTUAL_IF_DELETE(struct apple80211_virt_if_delete_data *d)
 {
     if (!d || d->version != APPLE80211_VERSION)
         return kIOReturnBadArgument;
@@ -2474,12 +2521,12 @@ IOReturn AirportRTW88::handleVIRTUAL_IF_DELETE(struct apple80211_virt_if_delete_
         target = p2p;
 
     if (!target) {
-        IOLog("AirPort_RTW88: VIRTUAL_IF_DELETE bsd=%s not found\n", requested);
+        IOLog("RTL88WiFi: VIRTUAL_IF_DELETE bsd=%s not found\n", requested);
         return kIOReturnNotFound;
     }
 
     UInt role = (UInt)target->getInterfaceRole();
-    IOLog("AirPort_RTW88: VIRTUAL_IF_DELETE role=%u bsd=%s\n", role, requested);
+    IOLog("RTL88WiFi: VIRTUAL_IF_DELETE role=%u bsd=%s\n", role, requested);
     bool ok = detachVirtualInterface(target, true);
     if (ok) {
         if (_awdlManager) _awdlManager->clearVirtualInterface(target);
@@ -2488,7 +2535,7 @@ IOReturn AirportRTW88::handleVIRTUAL_IF_DELETE(struct apple80211_virt_if_delete_
     return kIOReturnError;
 }
 
-IOReturn AirportRTW88::handleSSID(bool set, struct apple80211_ssid_data *d)
+IOReturn RTL88WiFi::handleSSID(bool set, struct apple80211_ssid_data *d)
 {
     if (!d) return kIOReturnBadArgument;
     if (set) return kIOReturnSuccess; // AirportItlwm accepts this; ASSOCIATE carries the target.
@@ -2505,7 +2552,7 @@ IOReturn AirportRTW88::handleSSID(bool set, struct apple80211_ssid_data *d)
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleAUTH_TYPE(bool set, struct apple80211_authtype_data *d)
+IOReturn RTL88WiFi::handleAUTH_TYPE(bool set, struct apple80211_authtype_data *d)
 {
     if (!d) return kIOReturnBadArgument;
     if (set) {
@@ -2523,10 +2570,10 @@ IOReturn AirportRTW88::handleAUTH_TYPE(bool set, struct apple80211_authtype_data
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleASSOCIATE(struct apple80211_assoc_data *d)
+IOReturn RTL88WiFi::handleASSOCIATE(struct apple80211_assoc_data *d)
 {
     setProperty("STA_INTERNAL_RSN_MODE", kOSBooleanTrue);
-    kprintf("AirPort_RTW88: handleASSOCIATE ENTER data=%p (internal RSN)\n", d);
+    kprintf("RTL88WiFi: handleASSOCIATE ENTER data=%p (internal RSN)\n", d);
     // Metadata only: never publish SSID, BSSID, PMK or password bytes.
     if (d) {
         setProperty("STA_ASSOC_INPUT_VERSION", (uint64_t)d->version, 32);
@@ -2623,12 +2670,12 @@ IOReturn AirportRTW88::handleASSOCIATE(struct apple80211_assoc_data *d)
     if (ret == kIOReturnSuccess)
         setProperty("STA_ASSOCIATE_ACCEPTED", kOSBooleanTrue);
 
-    IOLog("AirportRTW88: ASSOCIATE internal-RSN ssid=%s secure=%d keylen=%u ret=0x%x\n",
+    IOLog("RTL88WiFi: ASSOCIATE internal-RSN ssid=%s secure=%d keylen=%u ret=0x%x\n",
           ssid, secure, d->ad_key.key_len, ret);
     return ret;
 }
 
-IOReturn AirportRTW88::handleRSN_IE(bool set, struct apple80211_rsn_ie_data *d)
+IOReturn RTL88WiFi::handleRSN_IE(bool set, struct apple80211_rsn_ie_data *d)
 {
     if (!d) return kIOReturnBadArgument;
     if (set) {
@@ -2645,7 +2692,7 @@ IOReturn AirportRTW88::handleRSN_IE(bool set, struct apple80211_rsn_ie_data *d)
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleAP_IE_LIST(struct apple80211_ap_ie_data *d)
+IOReturn RTL88WiFi::handleAP_IE_LIST(struct apple80211_ap_ie_data *d)
 {
     /* Ventura+ airportd passes an inline ie_data[1024] buffer (1032 bytes
      * total) and expects the associated AP's beacon/probe-response IE list,
@@ -2669,7 +2716,7 @@ IOReturn AirportRTW88::handleAP_IE_LIST(struct apple80211_ap_ie_data *d)
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleCIPHER_KEY(struct apple80211_key *key)
+IOReturn RTL88WiFi::handleCIPHER_KEY(struct apple80211_key *key)
 {
     if (!key || key->version != APPLE80211_VERSION || key->key_len > APPLE80211_KEY_BUFF_LEN)
         return kIOReturnBadArgument;
@@ -2699,13 +2746,13 @@ IOReturn AirportRTW88::handleCIPHER_KEY(struct apple80211_key *key)
     } else if (key->key_flags == 0) {
         pairwise = false;
     } else {
-        IOLog("AirportRTW88: unexpected CIPHER_KEY flags=%u\n",
+        IOLog("RTL88WiFi: unexpected CIPHER_KEY flags=%u\n",
               key->key_flags);
         return kIOReturnUnsupported;
     }
     IOReturn ret = _ieee80211->cmdInstallExternalKey(pairwise,
                     (uint8_t)key->key_index, cipher, key->key, (uint8_t)key->key_len);
-    IOLog("AirportRTW88: CIPHER_KEY %s cipher=%u idx=%u len=%u ret=0x%x\n",
+    IOLog("RTL88WiFi: CIPHER_KEY %s cipher=%u idx=%u len=%u ret=0x%x\n",
           pairwise ? "PTK" : "GTK", key->key_cipher_type, key->key_index,
           key->key_len, ret);
     setProperty("STA_KEY_RAW_STATE", (uint64_t)_ieee80211->rawState(), 32);
@@ -2720,13 +2767,13 @@ IOReturn AirportRTW88::handleCIPHER_KEY(struct apple80211_key *key)
         _rsnHandshakeReported = true;
         setProperty(pairwise ? "APPLE_RSN_PTK_EVENT" : "APPLE_RSN_GTK_EVENT",
                     kOSBooleanTrue);
-        IOLog("AirportRTW88: Apple RSN key event posted type=%s ready=%d\n",
+        IOLog("RTL88WiFi: Apple RSN key event posted type=%s ready=%d\n",
               pairwise ? "PTK" : "GTK", _ieee80211->externalKeysReady());
     }
     return ret;
 }
 
-IOReturn AirportRTW88::handleDISASSOCIATE()
+IOReturn RTL88WiFi::handleDISASSOCIATE()
 {
     /* AirportItlwm acknowledges DISASSOCIATE without tearing down AUTH/ASSOC.
      * Its SCAN state also remains a scan rather than becoming a fake link-down
@@ -2740,14 +2787,14 @@ IOReturn AirportRTW88::handleDISASSOCIATE()
 
     if (raw == RTW88_STATE_AUTHENTICATING || raw == RTW88_STATE_ASSOCIATING) {
         setProperty("STA_DISASSOC_IGNORED_DURING_JOIN", kOSBooleanTrue);
-        IOLog("AirportRTW88: DISASSOCIATE ignored during join raw_state=%u\n", raw);
+        IOLog("RTL88WiFi: DISASSOCIATE ignored during join raw_state=%u\n", raw);
         return kIOReturnSuccess;
     }
 
     if (raw == RTW88_STATE_SCANNING && !visible) {
         setProperty("STA_DISASSOC_ACK_SCAN_ONLY", kOSBooleanTrue);
         setProperty("STA_DISASSOC_EXECUTED", kOSBooleanFalse);
-        IOLog("AirportRTW88: DISASSOCIATE acknowledged during disconnected scan (no teardown)\n");
+        IOLog("RTL88WiFi: DISASSOCIATE acknowledged during disconnected scan (no teardown)\n");
         /* v9 accidentally called cmdDisconnect() here, which generated a real
          * disconnected event and collapsed SCANNING to IDLE.  AirportItlwm's
          * join path treats this cleanup as non-destructive while association
@@ -2761,14 +2808,14 @@ IOReturn AirportRTW88::handleDISASSOCIATE()
     return _ieee80211->cmdDisconnect();
 }
 
-IOReturn AirportRTW88::handleSCAN_REQ(void *data)
+IOReturn RTL88WiFi::handleSCAN_REQ(void *data)
 {
     if (!data) return kIOReturnBadArgument;
     auto *d = static_cast<apple80211_scan_data *>(data);
     if (d->version != APPLE80211_VERSION || d->ssid_len > APPLE80211_MAX_SSID_LEN ||
         d->num_channels > APPLE80211_MAX_CHANNELS) return kIOReturnBadArgument;
     if (_scanInProgress) {
-        IOLog("AirPort_RTW88: SCAN_REQ coalesced with active scan\n");
+        IOLog("RTL88WiFi: SCAN_REQ coalesced with active scan\n");
         return kIOReturnSuccess;
     }
     RTW88StateResult st = {};
@@ -2776,7 +2823,7 @@ IOReturn AirportRTW88::handleSCAN_REQ(void *data)
         st.state == RTW88_STATE_CONNECTED) {
         _scanCursor = 0;
         UInt32 result = 0;
-        kprintf("AirPort_RTW88: SCAN_REQ connected cache-only completion\n");
+        kprintf("RTL88WiFi: SCAN_REQ connected cache-only completion\n");
         _netif->postMessage(APPLE80211_M_SCAN_DONE, &result, sizeof(result));
         return kIOReturnSuccess;
     }
@@ -2786,7 +2833,7 @@ IOReturn AirportRTW88::handleSCAN_REQ(void *data)
     return ret;
 }
 
-void AirportRTW88::fillScanResultFromBSS(const RTW88BSS &b, struct apple80211_scan_result *d, bool fullIEs)
+void RTL88WiFi::fillScanResultFromBSS(const RTW88BSS &b, struct apple80211_scan_result *d, bool fullIEs)
 {
     if (!d) return;
     bzero(d, sizeof(*d));
@@ -2857,7 +2904,7 @@ static bool bssIsNameless(const RTW88BSS &b)
     return true;
 }
 
-IOReturn AirportRTW88::handleSCAN_RESULT(struct apple80211_scan_result **out)
+IOReturn RTL88WiFi::handleSCAN_RESULT(struct apple80211_scan_result **out)
 {
     if (!out) return kIOReturnBadArgument;
     *out = nullptr;
@@ -2909,10 +2956,10 @@ IOReturn AirportRTW88::handleSCAN_RESULT(struct apple80211_scan_result **out)
                 IOReturn scanRet = _ieee80211->cmdScan();
                 if (scanRet != kIOReturnSuccess) {
                     _scanInProgress = false;
-                    IOLog("AirPort_RTW88: Sonoma cache bootstrap scan failed 0x%x\n", scanRet);
+                    IOLog("RTL88WiFi: Sonoma cache bootstrap scan failed 0x%x\n", scanRet);
                     return scanRet;
                 }
-                IOLog("AirPort_RTW88: Sonoma cache-only SCAN_RESULT triggered bootstrap scan\n");
+                IOLog("RTL88WiFi: Sonoma cache-only SCAN_RESULT triggered bootstrap scan\n");
                 return kIOReturnBusy;
             }
         }
@@ -2934,7 +2981,7 @@ IOReturn AirportRTW88::handleSCAN_RESULT(struct apple80211_scan_result **out)
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleCURRENT_NETWORK(struct apple80211_scan_result *out)
+IOReturn RTL88WiFi::handleCURRENT_NETWORK(struct apple80211_scan_result *out)
 {
     static_assert(sizeof(apple80211_scan_result) == 1164, "Ventura CURRENT_NETWORK ABI changed");
     if (!out) return kIOReturnBadArgument;
@@ -2950,7 +2997,7 @@ IOReturn AirportRTW88::handleCURRENT_NETWORK(struct apple80211_scan_result *out)
         IOReturn sr = _ieee80211->cmdGetState(&st);
         if (sr != kIOReturnSuccess || st.state != RTW88_STATE_CONNECTED ||
             st.channel == 0 || st.ssid[0] == '\0') {
-            kprintf("AirPort_RTW88: CURRENT_NETWORK unavailable bss=0x%x state=0x%x run=%u ch=%u ssid0=%u\n",
+            kprintf("RTL88WiFi: CURRENT_NETWORK unavailable bss=0x%x state=0x%x run=%u ch=%u ssid0=%u\n",
                   ret, sr, st.state, st.channel, (unsigned)(uint8_t)st.ssid[0]);
             return ret != kIOReturnSuccess ? ret : kIOReturnNotReady;
         }
@@ -2962,17 +3009,17 @@ IOReturn AirportRTW88::handleCURRENT_NETWORK(struct apple80211_scan_result *out)
         current.channel = (uint8_t)st.channel;
         current.rssi = (int16_t)st.rssi;
         current.beacon_interval = 100;
-        kprintf("AirPort_RTW88: CURRENT_NETWORK reconstructed from connected state\n");
+        kprintf("RTL88WiFi: CURRENT_NETWORK reconstructed from connected state\n");
     }
 
     fillScanResultFromBSS(current, out, true);
-    kprintf("AirPort_RTW88: CURRENT_NETWORK ssid_len=%u channel=%u rssi=%d ies=%d\n",
+    kprintf("RTL88WiFi: CURRENT_NETWORK ssid_len=%u channel=%u rssi=%d ies=%d\n",
           out->asr_ssid_len, out->asr_channel.channel,
           out->asr_rssi, out->asr_ie_len);
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleSTATE(struct apple80211_state_data *out)
+IOReturn RTL88WiFi::handleSTATE(struct apple80211_state_data *out)
 {
     if (!out) return kIOReturnBadArgument;
     struct RTW88StateResult st;
@@ -2991,7 +3038,7 @@ IOReturn AirportRTW88::handleSTATE(struct apple80211_state_data *out)
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handleCHANNEL(struct apple80211_channel_data *out)
+IOReturn RTL88WiFi::handleCHANNEL(struct apple80211_channel_data *out)
 {
     if (!out) return kIOReturnBadArgument;
     RTW88StateResult st = {};
@@ -3010,7 +3057,7 @@ IOReturn AirportRTW88::handleCHANNEL(struct apple80211_channel_data *out)
     return kIOReturnSuccess;
 }
 
-IOReturn AirportRTW88::handlePOWER(bool set, struct apple80211_power_data *d)
+IOReturn RTL88WiFi::handlePOWER(bool set, struct apple80211_power_data *d)
 {
     if (!d) return kIOReturnBadArgument;
     if (set && __atomic_load_n(&_shutdown, __ATOMIC_ACQUIRE))
@@ -3042,7 +3089,7 @@ IOReturn AirportRTW88::handlePOWER(bool set, struct apple80211_power_data *d)
     return kIOReturnSuccess;
 }
 
-SInt32 AirportRTW88::stopDMA()
+SInt32 RTL88WiFi::stopDMA()
 {
     /* This callback can run with the IO80211 command gate held. Do not join
      * workers or recursively disable the interface here: they may need that
@@ -3058,30 +3105,77 @@ SInt32 AirportRTW88::stopDMA()
     return kIOReturnSuccess;
 }
 
-void AirportRTW88::systemWillShutdown(IOOptionBits specifier)
+void RTL88WiFi::systemWillShutdown(IOOptionBits specifier)
 {
     if (specifier == kIOMessageSystemWillPowerOff ||
         specifier == kIOMessageSystemWillRestart) {
         __atomic_store_n(&_shutdown, true, __ATOMIC_RELEASE);
         const SInt32 result = stopDMA();
-        IOLog("AirportRTW88: shutdown DMA fence result=0x%x\n", result);
+        IOLog("RTL88WiFi: shutdown DMA fence result=0x%x\n", result);
     }
     super::systemWillShutdown(specifier);
 }
 
-UInt32 AirportRTW88::hardwareOutputQueueDepth(IO80211Interface *interface)
+UInt32 RTL88WiFi::hardwareOutputQueueDepth(IO80211Interface *interface)
 {
     /* AirportItlwm reports 0 here; IO80211 owns the queueing policy. */
     return 0;
 }
 
-SInt32 AirportRTW88::performCountryCodeOperation(IO80211Interface *interface, IO80211CountryCodeOp op)
+UInt32 RTL88WiFi::getDataQueueDepth(OSObject *)
+{
+    /* Read once by IO80211Interface::init() as its per-AC dequeue limit. */
+    return kRTW88DataQueueDepth;
+}
+
+IOReturn RTL88WiFi::outputStart(IONetworkInterface *interface, IOOptionBits options)
+{
+    if (interface && interface == _netif && txGateWanted()) {
+        __atomic_store_n(&_txGated, true, __ATOMIC_SEQ_CST);
+        _txGateCount++;
+        /* Re-check after publishing the flag so a drain that ran in
+         * between cannot be missed; kickGatedOutput() signals otherwise. */
+        if (txGateWanted())
+            return kIOReturnNoResources;
+        __atomic_store_n(&_txGated, false, __ATOMIC_SEQ_CST);
+    }
+    return super::outputStart(interface, options);
+}
+
+bool RTL88WiFi::txGateWanted()
+{
+    /* A stalled queue cannot drain, so anything pulled now only waits in
+     * (or tail-drops from) the 256-entry family queue. Open again only once
+     * resumeTxIfStalled()/releaseTxStall() has cleared the stall at
+     * kRTW88TxResumeAvail, which gives the gate the stall's hysteresis. */
+    if (__atomic_load_n(&_txStalled, __ATOMIC_SEQ_CST) ||
+        rtw88_be_tx_avail() < kRTW88TxStallAvail)
+        return true;
+    IOOutputQueue *q = getOutputQueue();
+    return q && q->getSize() >= kRTW88TxQueueHigh;
+}
+
+void RTL88WiFi::kickGatedOutput()
+{
+    if (!__atomic_load_n(&_txGated, __ATOMIC_SEQ_CST) || !_netif)
+        return;
+    if (__atomic_load_n(&_txStalled, __ATOMIC_SEQ_CST) ||
+        rtw88_be_tx_avail() < kRTW88TxStallAvail)
+        return;
+    IOOutputQueue *q = getOutputQueue();
+    if (q && q->getSize() > kRTW88TxQueueLow)
+        return;
+    if (__atomic_exchange_n(&_txGated, false, __ATOMIC_SEQ_CST))
+        _netif->signalOutputThread();
+}
+
+SInt32 RTL88WiFi::performCountryCodeOperation(IO80211Interface *interface, IO80211CountryCodeOp op)
 {
     /* Match AirportItlwm: acknowledge IO80211's country-code operation. */
     return kIOReturnSuccess;
 }
 
-SInt32 AirportRTW88::enableFeature(IO80211FeatureCode feature, void *data)
+SInt32 RTL88WiFi::enableFeature(IO80211FeatureCode feature, void *data)
 {
     /* Match AirportItlwm: AWDL service initialization does not depend on
      * acknowledging undocumented feature codes. Keep this truthful and
@@ -3091,7 +3185,7 @@ SInt32 AirportRTW88::enableFeature(IO80211FeatureCode feature, void *data)
     return 102;
 }
 
-SInt32 AirportRTW88::monitorModeSetEnabled(IO80211Interface *interface,
+SInt32 RTL88WiFi::monitorModeSetEnabled(IO80211Interface *interface,
                                             bool enabled,
                                             UInt32 mode)
 {
@@ -3099,12 +3193,12 @@ SInt32 AirportRTW88::monitorModeSetEnabled(IO80211Interface *interface,
     return kIOReturnSuccess;
 }
 
-mbuf_t AirportRTW88::allocateInputPacket(uint32_t len)
+mbuf_t RTL88WiFi::allocateInputPacket(uint32_t len)
 {
     return allocatePacket(len);  /* helper heredado de IONetworkController */
 }
 
-void AirportRTW88::injectRxFrame(mbuf_t m)
+void RTL88WiFi::injectRxFrame(mbuf_t m)
 {
     if (!m)
         return;
@@ -3122,7 +3216,7 @@ void AirportRTW88::injectRxFrame(mbuf_t m)
     size_t mlen = mbuf_len(m);
 
     if (plen < 14 || plen > 4096 || mlen < 14 || mlen > 4096) {
-        IOLog("AirportRTW88: dropping bogus RX mbuf pkthdr=%zu mlen=%zu\n",
+        IOLog("RTL88WiFi: dropping bogus RX mbuf pkthdr=%zu mlen=%zu\n",
               plen, mlen);
         mbuf_freem(m);
         return;
@@ -3197,7 +3291,7 @@ static packet_info_tag *rtw88ZeroPacketInfo(uint8_t (&storage)[64])
 }
 }
 
-void AirportRTW88::injectRxActionFrame(const uint8_t *frame, uint32_t len,
+void RTL88WiFi::injectRxActionFrame(const uint8_t *frame, uint32_t len,
                                        int8_t rssi, uint16_t channel)
 {
     IO80211VirtualInterface *awdl =
@@ -3272,7 +3366,7 @@ void AirportRTW88::injectRxActionFrame(const uint8_t *frame, uint32_t len,
     }
 }
 
-void AirportRTW88::injectRxAWDLFrame(mbuf_t m)
+void RTL88WiFi::injectRxAWDLFrame(mbuf_t m)
 {
     if (!m) return;
     IO80211VirtualInterface *awdl = _awdlManager ? _awdlManager->awdlInterface() : nullptr;
@@ -3290,12 +3384,12 @@ void AirportRTW88::injectRxAWDLFrame(mbuf_t m)
     (void)packetLen;
 }
 
-IOWorkLoop *AirportRTW88::getRxWorkLoop()
+IOWorkLoop *RTL88WiFi::getRxWorkLoop()
 {
-    return _workLoop;   /* miembro ya declarado en AirportRTW88.hpp */
+    return _workLoop;   /* miembro ya declarado en RTL88WiFi.hpp */
 }
 
-bool AirportRTW88::setLinkStatus(UInt32 status, const IONetworkMedium *activeMedium,
+bool RTL88WiFi::setLinkStatus(UInt32 status, const IONetworkMedium *activeMedium,
                                   UInt64 speed, OSData *data)
 {
     if (__atomic_load_n(&_shutdown, __ATOMIC_ACQUIRE)) return false;
@@ -3307,14 +3401,14 @@ bool AirportRTW88::setLinkStatus(UInt32 status, const IONetworkMedium *activeMed
         if (getCommandGate()) {
             getCommandGate()->runAction(
                 [](OSObject *owner, void *value, void *reason, void *, void *) -> IOReturn {
-                    auto *self = static_cast<AirportRTW88 *>(owner);
+                    auto *self = static_cast<RTL88WiFi *>(owner);
                     if (!self->_netif) return kIOReturnNotReady;
                     const bool linkUp = (uintptr_t)value != 0;
                     const unsigned int why = (unsigned int)(uintptr_t)reason;
                     IOReturn lr = self->_netif->setLinkState(
                         linkUp ? kIO80211NetworkLinkUp : kIO80211NetworkLinkDown,
                         linkUp ? 0U : why);
-                    IOLog("AirportRTW88: link %s reason=%u ret=0x%x\n",
+                    IOLog("RTL88WiFi: link %s reason=%u ret=0x%x\n",
                           linkUp ? "up" : "down", linkUp ? 0U : why, (unsigned)lr);
                     if (linkUp) {
                         self->_netif->setLinkQualityMetric(100);
@@ -3339,7 +3433,7 @@ bool AirportRTW88::setLinkStatus(UInt32 status, const IONetworkMedium *activeMed
     return ret;
 }
 
-void AirportRTW88::setLinkStatus(UInt32 status)
+void RTL88WiFi::setLinkStatus(UInt32 status)
 {
     /* RTW88RxDelegate entry point.  Route it through the full controller
      * override so registry link properties and IO80211 interface state change
@@ -3347,7 +3441,7 @@ void AirportRTW88::setLinkStatus(UInt32 status)
     (void)setLinkStatus(status, nullptr, 0, nullptr);
 }
 
-void AirportRTW88::rtw88Event(RTW88Event ev, void *data)
+void RTL88WiFi::rtw88Event(RTW88Event ev, void *data)
 {
     if (__atomic_load_n(&_shutdown, __ATOMIC_ACQUIRE) || !_netif) return;
     switch (ev) {

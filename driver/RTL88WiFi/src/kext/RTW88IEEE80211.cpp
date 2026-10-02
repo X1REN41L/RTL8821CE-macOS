@@ -1,3 +1,4 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 // RTW88IEEE80211.cpp — 802.11 state machine
 
@@ -1288,6 +1289,11 @@ void RTW88IEEE80211::processRxMgmt(struct sk_buff *skb)
     case 0x0050: /* probe response */
         if (_state == RTW88_STATE_SCANNING)
             processScanResult(skb);
+        else if (stype == 0x0080 && _state == RTW88_STATE_CONNECTED &&
+                 !_curBssTim && skb->len >= sizeof(struct ieee80211_hdr_3addr) &&
+                 memcmp(((struct ieee80211_hdr_3addr *)skb->data)->addr3,
+                        _targetBSS.bssid, 6) == 0)
+            processScanResult(skb);   /* r10: refresh IE list with a TIM */
         else
             kfree_skb(skb);
         break;
@@ -1520,6 +1526,18 @@ static bool rtw88SsidIsBlank(const uint8_t *ssid, uint8_t len)
  * zero byte (its "SSID IE not found" / "SSID string empty" cases).  One
  * blank-SSID frame from an AP whose beacons are named replaced the cached IE
  * list and flipped the connected network to hidden after a wake. */
+/* r10: offset of the first well-formed element `id` in an IE list, or -1. */
+static int rtw88IeFind(const uint8_t *ies, uint32_t len, uint8_t id)
+{
+    for (uint32_t i = 0; i + 2 <= len; ) {
+        uint32_t elen = 2u + ies[i + 1];
+        if (i + elen > len) break;
+        if (ies[i] == id) return (int)i;
+        i += elen;
+    }
+    return -1;
+}
+
 static void rtw88RestoreSsidIe(RTW88BSS *bss)
 {
     if (!bss->ssid_len || bss->ssid_len > 32) return;
@@ -1570,6 +1588,7 @@ void RTW88IEEE80211::processScanResult(struct sk_buff *skb)
 
     bool securityIESeen = false;
     bool iesComplete = true;
+    bool ssidIeCopied = false;
     /* Walk IEs */
     while (body + 2 <= end) {
         uint8_t id = body[0];
@@ -1605,9 +1624,15 @@ void RTW88IEEE80211::processScanResult(struct sk_buff *skb)
             bss->akm    = 0x000FAC02; /* PSK */
         }
 
-        /* Copy all IEs */
+        /* Copy all IEs, except the padding some APs append to probe
+         * responses (seen as a trailing empty vendor element plus empty SSID
+         * elements): keep only the first SSID element and drop vendor
+         * elements too short to hold an OUI. */
+        bool skipIe = (id == WLAN_EID_SSID && ssidIeCopied) ||
+                      (id == WLAN_EID_VENDOR_SPECIFIC && len < 3);
+        if (id == WLAN_EID_SSID) ssidIeCopied = true;
         uint16_t copy = (uint16_t)(2 + len);
-        if (bss->ies_len + copy < sizeof(bss->ies)) {
+        if (!skipIe && bss->ies_len + copy < sizeof(bss->ies)) {
             memcpy(bss->ies + bss->ies_len, body, copy);
             bss->ies_len += copy;
         }
@@ -1665,6 +1690,22 @@ void RTW88IEEE80211::processScanResult(struct sk_buff *skb)
                           bss->bssid[4], bss->bssid[5],
                           le16_to_cpu(hdr->frame_control) & 0x00f0, c);
             }
+            /* A probe response has no TIM. Keep the TIM learned from this
+             * BSS's named beacons so the cached list still reads as a beacon.
+             * Not for a hidden AP: its name only comes from probe responses. */
+            if (bss->beacon_named &&
+                rtw88IeFind(bss->ies, bss->ies_len, WLAN_EID_TIM) < 0) {
+                int t = rtw88IeFind(e->ies, e->ies_len, WLAN_EID_TIM);
+                if (t >= 0) {
+                    uint32_t tl = 2u + e->ies[t + 1];
+                    if (bss->ies_len + tl < sizeof(bss->ies)) {
+                        memcpy(bss->ies + bss->ies_len, e->ies + t, tl);
+                        bss->ies_len = (uint16_t)(bss->ies_len + tl);
+                    }
+                }
+            }
+            if (memcmp(bss->bssid, _targetBSS.bssid, 6) == 0)
+                _curBssTim = rtw88IeFind(bss->ies, bss->ies_len, WLAN_EID_TIM) >= 0;
             struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
             if (status->flag & RX_FLAG_NO_SIGNAL_VAL) bss->rssi = e->rssi;
             RTW88BSS *saved_next = e->next;
@@ -1676,6 +1717,8 @@ void RTW88IEEE80211::processScanResult(struct sk_buff *skb)
             return;
         }
     }
+    if (memcmp(bss->bssid, _targetBSS.bssid, 6) == 0)
+        _curBssTim = rtw88IeFind(bss->ies, bss->ies_len, WLAN_EID_TIM) >= 0;
     bss->next = _bssList;
     _bssList  = bss;
     _bssCount++;
@@ -1716,9 +1759,15 @@ void RTW88IEEE80211::processRxData(struct sk_buff *skb)
      * out of order collapses TCP and trips CCMP replay drops — that is the RX
      * regression aggregation otherwise causes. */
     struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
-    if (ieee80211_is_data_qos(hdr->frame_control)) {
+    /* r10 (mac80211 ieee80211_rx_reorder_ampdu parity): group-addressed
+     * frames use the AP's separate multicast sequence counter and NoAck
+     * frames are outside the BlockAck agreement, so neither may move the
+     * unicast reorder window or be dropped as "stale" by it. */
+    if (ieee80211_is_data_qos(hdr->frame_control) &&
+        !is_multicast_ether_addr(hdr->addr1)) {
         uint16_t hdrlen = ieee80211_get_hdrlen_from_skb(skb);
-        if (skb->len >= hdrlen) {
+        if (skb->len >= hdrlen &&
+            (skb->data[hdrlen - 2] & 0x60) != 0x20) {   /* ack policy != NoAck */
             uint8_t tid = (uint8_t)(skb->data[hdrlen - 2] & 0x0f);
             if (tid < kRxBaNumTid && _rxBa[tid] && _rxBa[tid]->active) {
                 uint16_t sn = (uint16_t)
@@ -2410,7 +2459,7 @@ IOReturn RTW88IEEE80211::cmdScan()
     _awdlPreparedChannel = 0;
     /* Physical scans are only safe while unassociated until the manual
      * scanner can honor CoreWiFi's requested channel subset / availability
-     * windows. AirportRTW88 handles CONNECTED background scans cache-only. */
+     * windows. RTL88WiFi handles CONNECTED background scans cache-only. */
     if (_state != RTW88_STATE_IDLE) {
         IOLog("rtw88: physical scan busy state=%u\n", (unsigned)_state);
         return kIOReturnBusy;
@@ -2688,6 +2737,7 @@ IOReturn RTW88IEEE80211::cmdConnect(const char *ssid, const char *password, cons
         return kIOReturnNotFound;
     }
     memcpy(&_targetBSS, target, sizeof(_targetBSS));
+    _curBssTim = false;
     _rssi = target->rssi < 0 && target->rssi >= -127 ? target->rssi : -100;
     IOLockUnlock(_bssLock);
 
@@ -3140,7 +3190,7 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
     /* External Apple-RSN mode needs ASSOC_DONE at raw 802.11 association so
      * EAPOLController can take over.  The proven RTL8822BE path uses the
      * internal rtw88 supplicant instead: there CoreWiFi is notified from
-     * AirportRTW88::setLinkStatus() only after the controlled port is usable
+     * RTL88WiFi::setLinkStatus() only after the controlled port is usable
      * (open immediately, WPA2 after the 4-way handshake). */
     if (_externalSupplicant && _delegate)
         _delegate->rtw88Event(kRTW88EventAssocDone, nullptr);

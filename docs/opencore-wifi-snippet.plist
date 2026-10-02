@@ -64,13 +64,13 @@
 				<key>Arch</key>
 				<string>Any</string>
 				<key>BundlePath</key>
-				<string>AirPort_RTW88.kext</string>
+				<string>RTL88WiFi.kext</string>
 				<key>Comment</key>
-				<string>Realtek Wi-Fi experiment - AirPort_RTW88</string>
+				<string>Realtek Wi-Fi experiment - RTL88WiFi</string>
 				<key>Enabled</key>
 				<true/>
 				<key>ExecutablePath</key>
-				<string>Contents/MacOS/AirPort_RTW88</string>
+				<string>Contents/MacOS/RTL88WiFi</string>
 				<key>MaxKernel</key>
 				<string></string>
 				<key>MinKernel</key>

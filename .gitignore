@@ -2,4 +2,5 @@
 ._*
 __MACOSX/
 *.log
-driver/Feixiao/build/
+driver/RTL88WiFi/build/
+tests/focused-validation-results.json

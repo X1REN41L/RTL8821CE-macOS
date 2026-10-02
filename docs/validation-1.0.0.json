@@ -1,0 +1,27 @@
+{
+  "all_pass": true,
+  "version": "1.0.0",
+  "bundle_id": "io.github.x1ren41l.RTL88WiFi",
+  "driver_build": "1.0.0-rtl88wifi-r11-20261002",
+  "uuid": "142FF73E-DCA5-3C57-B879-B2BA93B0AA06",
+  "executable_sha256": "23befe815a2486f35a57bb0306c2b102910a2f4a23d2b91d7d1233618f9c4c77",
+  "r11_source_files_verified": 1316,
+  "rtw88_source_unchanged": true,
+  "host_suites_passed": [
+    "focused",
+    "group-key",
+    "handshake",
+    "rx-filter",
+    "scan-ssid"
+  ],
+  "imports_identical_to_r11": true,
+  "no_previous_driver_identity_in_binary": true,
+  "no_local_home_paths_in_binary": true,
+  "ocvalidate_1.0.7": "No issues found (isolated temporary EFI)",
+  "preserved_license_and_upstream_credits": true,
+  "hardware_boot_test": "Pending for renamed bundle; r11 gate untested on hardware; r10 predecessor was hardware-tested",
+  "installed_targets": [
+    "repository Kexts/RTL88WiFi.kext"
+  ],
+  "efi_writes": false
+}

@@ -1,3 +1,4 @@
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * XNU OSKext::start/stop owns C++ constructors/destructors on x86_64.
  * Module callbacks must not initialize or finalize that runtime again.
@@ -8,7 +9,7 @@ extern kern_return_t _start(kmod_info_t *, void *);
 extern kern_return_t _stop(kmod_info_t *, void *);
 extern int printf(const char *format, ...);
 #ifdef RTW88_AIRPORT_KMOD
-KMOD_EXPLICIT_DECL(com.rtw88.airport, "2.0.1", _start, _stop)
+KMOD_EXPLICIT_DECL(io.github.x1ren41l.RTL88WiFi, "1.0.0", _start, _stop)
 #else
 KMOD_EXPLICIT_DECL(com.rtw88.driver, "1.0.1", _start, _stop)
 #endif
