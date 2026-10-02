@@ -1,4 +1,4 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * Native IO80211 controller for the RTL8822BE port.
  */
@@ -87,7 +87,7 @@ bool RTL88WiFi::init(OSDictionary *props)
     return super::init(props);
 }
 
-/* Match AirportItlwm's IO80211Controller lifecycle.  IONetworkController::
+/* Match the reference IO80211 driver's IO80211Controller lifecycle.  IONetworkController::
  * start() calls this virtual before RTL88WiFi::start() continues; using an
  * IO80211WorkLoop keeps controller IOCTL/VIF callbacks, our interrupt source
  * and RX injection on the same controller-owned workloop. */
@@ -167,7 +167,7 @@ bool RTL88WiFi::start(IOService *provider)
     IOLog("RTL88WiFi: PCI device %04x:%04x\n",
           _compatPciDev->vendor, _compatPciDev->device);
 
-    /* super::start() has already called our createWorkLoop().  AirportItlwm
+    /* super::start() has already called our createWorkLoop().  The reference IO80211 driver
      * relies on that controller-owned IO80211WorkLoop; do not create a second
      * parallel loop here. */
     if (!_workLoop)
@@ -202,7 +202,7 @@ bool RTL88WiFi::start(IOService *provider)
         return failStart(provider, "failed to initialize AWDL/P2P manager");
     IOLog("RTL88WiFi: AWDL/P2P manager initialized (partial support)\n");
 
-    /* AirportItlwm Ventura publishes and selects the medium before
+    /* The reference Ventura IO80211 driver publishes and selects the medium before
      * attachInterface().  This is deliberately kept in the legacy Ventura
      * frontend so OCLP's IO80211FamilyLegacy sees the same controller
      * lifecycle on Sonoma/Sequoia. */
@@ -215,7 +215,7 @@ bool RTL88WiFi::start(IOService *provider)
     /* Let IO80211/IONetworkController prepare and configure the client.
      * Calling init/attach directly bypasses the controller's lifecycle. */
     IOLog("RTL88WiFi: calling attachInterface (AirportItlwm lifecycle, attach=true)\n");
-    /* AirportItlwm passes its member pointer directly.  This matters when
+    /* The reference IO80211 driver passes its member pointer directly.  This matters when
      * attach=true because matching/registration can be synchronous: make the
      * primary interface visible to our callbacks before attachInterface()
      * returns instead of assigning it afterwards from a temporary. */
@@ -236,7 +236,7 @@ bool RTL88WiFi::start(IOService *provider)
     rtw88_set_tx_resume_cb(rtw88_airport_tx_resume_trampoline);
     if (_intrSrc) _intrSrc->enable();
 
-    /* AirportItlwm publishes a valid-but-not-yet-associated link, then both
+    /* The reference IO80211 driver publishes a valid-but-not-yet-associated link, then both
      * the controller service and the interface.  The controller publication
      * is important for IO80211 clients that own virtual-interface lifecycle. */
     IO80211Controller::setLinkStatus(kIONetworkLinkValid);
@@ -348,7 +348,7 @@ bool RTL88WiFi::failStart(IOService *provider, const char *reason)
 {
     IOLog("RTL88WiFi: start failed: %s\n", reason ? reason : "unknown error");
 
-    /* Match AirportItlwm/IONetworkController ownership ordering: IO80211 must
+    /* Match IO80211/IONetworkController ownership ordering: IO80211 must
      * stop while the controller workloop, interface and backend still exist.
      * Releasing those first can leave super::stop() touching freed state. */
     if (_superStarted) {
@@ -828,7 +828,7 @@ IOReturn RTL88WiFi::setPowerState(unsigned long powerStateOrdinal, IOService *wh
 
 void RTL88WiFi::stop(IOService *provider)
 {
-    /* AirportItlwm calls IO80211Controller::stop() before releasing its
+    /* The reference IO80211 driver calls IO80211Controller::stop() before releasing its
      * workloop/HAL/interface state. Keep the same ordering here so superclass
      * teardown cannot observe a freed IO80211WorkLoop or Realtek backend. */
     if (_superStarted) {
@@ -903,7 +903,7 @@ IOReturn RTL88WiFi::getPacketFilters(const OSSymbol *group, UInt32 *filters) con
 {
     if (!group || !filters) return kIOReturnBadArgument;
     if (group == gIONetworkFilterGroup) {
-        /* AirportItlwm v2.2.0 publishes these two filters to IO80211. */
+        /* The reference IO80211 driver publishes these two filters to IO80211. */
         *filters = kIOPacketFilterMulticast | kIOPacketFilterPromiscuous;
         return kIOReturnSuccess;
     }
@@ -927,7 +927,7 @@ IOReturn RTL88WiFi::setMulticastList(IOEthernetAddress *addrs, UInt32 count)
 
 IOReturn RTL88WiFi::setPromiscuousMode(bool active)
 {
-    /* Match AirportItlwm's IO80211 contract.  rtw88's normal STA receive
+    /* Match the reference IO80211 driver's IO80211 contract.  rtw88's normal STA receive
      * filter remains authoritative; this callback must not abort IO80211 setup. */
     (void)active;
     return kIOReturnSuccess;
@@ -935,7 +935,7 @@ IOReturn RTL88WiFi::setPromiscuousMode(bool active)
 
 bool RTL88WiFi::createMediumTables(const IONetworkMedium **primary)
 {
-    /* AirportItlwm Ventura publishes the medium dictionary before
+    /* The reference Ventura IO80211 driver publishes the medium dictionary before
      * attachInterface().  Keep the same IO80211 lifecycle so the interface
      * is born with a selected/current medium already available. */
     OSDictionary *mediumDict = OSDictionary::withCapacity(1);
@@ -979,7 +979,7 @@ IONetworkInterface *RTL88WiFi::createInterface()
 
 bool RTL88WiFi::configureInterface(IONetworkInterface *iface)
 {
-    /* Match AirportItlwm Ventura: IO80211/IONetworkController performs the
+    /* Match the reference Ventura IO80211 driver: IO80211/IONetworkController performs the
      * interface configuration.  The medium table is published in start()
      * before attachInterface(), not created during the attach callback. */
     bool ok = super::configureInterface(iface);
@@ -998,7 +998,7 @@ IOReturn RTL88WiFi::selectMedium(const IONetworkMedium *medium)
 UInt32 RTL88WiFi::getFeatures() const
 {
     /* Preserve IONetworkController feature flags. IO80211-specific 802.11n
-     * negotiation is handled by enableFeature(), as in AirportItlwm. */
+     * negotiation is handled by enableFeature(), as in the reference IO80211 driver. */
     return super::getFeatures();
 }
 
@@ -1078,7 +1078,7 @@ IOReturn RTL88WiFi::getHardwareAddressForInterface(IO80211Interface *iface,
                                                        IOEthernetAddress *addr)
 {
     (void)iface;
-    /* AirportItlwm maps the infrastructure-interface query to the physical
+    /* The reference IO80211 driver maps the infrastructure-interface query to the physical
      * controller address.  Virtual interfaces get their own address through
      * IO80211's attachVirtualInterface lifecycle. */
     return getHardwareAddress(addr);
@@ -1087,7 +1087,7 @@ IOReturn RTL88WiFi::getHardwareAddressForInterface(IO80211Interface *iface,
 /*
  * Ventura IO80211FamilyLegacy transport compatibility.
  *
- * AirportItlwm Ventura implements apple80211Request() and leaves association/
+ * the reference Ventura IO80211 driver implements apple80211Request() and leaves association/
  * security translation to IO80211FamilyLegacy. Preserve that path except for
  * scan and the validated 900/908-byte association prefix on newer hosts using
  * the restored Legacy/Skywalk stack.
@@ -1617,7 +1617,7 @@ SInt32 RTL88WiFi::apple80211_ioctl_set(IO80211SkywalkInterface *skywalkInterface
 }
 #endif
 
-/* Native IO80211 request payloads; compared against AirportItlwm v2.2.0
+/* Native IO80211 request payloads; compared against the reference IO80211 driver
  * Ventura's apple80211Request dispatcher.  The BSD wrapper above is only a
  * transport fallback when the restored family does not dispatch a request. */
 SInt32 RTL88WiFi::apple80211Request(unsigned int request_type,
@@ -1836,9 +1836,9 @@ __attribute__((__noinline__)) SInt32 RTL88WiFi::handleNativeRequest(
         auto *d = static_cast<apple80211_capability_data *>(data);
         bzero(d, sizeof(*d)); d->version = APPLE80211_VERSION;
 
-        /* Follow AirportItlwm v2.2.0's Ventura capability layout.
+        /* Follow the reference IO80211 driver's Ventura capability layout.
          * Keep the low feature bits truthful for rtw88, then use the exact
-         * opaque high-byte pattern AirportItlwm currently exposes. Do not
+         * opaque high-byte pattern the reference IO80211 driver currently exposes. Do not
          * invent extra AWDL bits: IO80211 probes the virtual-interface path
          * separately. */
         const unsigned caps[] = {
@@ -1849,7 +1849,7 @@ __attribute__((__noinline__)) SInt32 RTL88WiFi::handleNativeRequest(
         for (unsigned cap : caps)
             d->capabilities[cap / 8] |= 1U << (cap % 8);
 
-        /* AirportItlwm v2.2.0 (Ventura legacy IO80211 path) publishes these
+        /* The reference IO80211 driver (Ventura legacy IO80211 path) publishes these
          * high bytes. Keep them byte-for-byte aligned with the reference; the
          * previous 1.0.1 draft had drifted to a different experimental mask. */
         d->capabilities[2] = 0xFF;
@@ -1993,7 +1993,7 @@ __attribute__((__noinline__)) SInt32 RTL88WiFi::handleNativeRequest(
     }
 
     case APPLE80211_IOC_ROAM:
-        /* AirportItlwm v2.2.0 recognizes the selector but declines the roam
+        /* The reference IO80211 driver recognizes the selector but declines the roam
          * command.  Returning an explicit error is better than an unknown
          * selector because CoreWiFi now knows the controller understood it. */
         return isSet ? kIOReturnError : kIOReturnUnsupported;
@@ -2010,7 +2010,7 @@ __attribute__((__noinline__)) SInt32 RTL88WiFi::handleNativeRequest(
         if (isSet) return kIOReturnSuccess;
         RTW88StateResult st = {}; IOReturn ret = _ieee80211->cmdGetState(&st);
         if (ret) return ret;
-        // AirportItlwm returns BSD ENXIO (6) until associated. Success with
+        // The reference IO80211 driver returns BSD ENXIO (6) until associated. Success with
         // an empty BSSID can make airportd treat an idle interface as joined.
         if (st.state != RTW88_STATE_CONNECTED) return 6;
         auto *d = static_cast<apple80211_bssid_data *>(data);
@@ -2031,7 +2031,7 @@ __attribute__((__noinline__)) SInt32 RTL88WiFi::handleNativeRequest(
         if (ret) return ret;
         auto *d = static_cast<apple80211_assoc_status_data *>(data);
         bzero(d, sizeof(*d)); d->version = APPLE80211_VERSION;
-        // Query success is distinct from successful association (AirportItlwm).
+        // Query success is distinct from successful association (the reference IO80211 driver).
         d->status = st.state == RTW88_STATE_CONNECTED ?
             APPLE80211_STATUS_SUCCESS : APPLE80211_STATUS_UNAVAILABLE;
         return kIOReturnSuccess;
@@ -2246,7 +2246,7 @@ __attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestPHY_MODE(bool isS
         d->phy_mode = APPLE80211_MODE_11A | APPLE80211_MODE_11B |
             APPLE80211_MODE_11G | APPLE80211_MODE_11N | APPLE80211_MODE_11AC;
 
-        /* AirportItlwm reports the current negotiated PHY instead of AUTO
+        /* The reference IO80211 driver reports the current negotiated PHY instead of AUTO
          * once a BSS is selected.  rtw88 already keeps the target BSS IEs, so
          * infer the same legacy/HT/VHT distinction without depending on a
          * host-version-specific Skywalk API. */
@@ -2307,7 +2307,7 @@ __attribute__((__noinline__)) IOReturn RTL88WiFi::handleRequestRATE(bool isSet, 
             }
             pos = (uint16_t)(pos + 2U + n);
         }
-        /* Legacy rates use 500-kbit/s units; AirportItlwm exposes its
+        /* Legacy rates use 500-kbit/s units; the reference IO80211 driver exposes its
          * net80211 rate value directly through this ABI. */
         d->rate[0] = best;
         return kIOReturnSuccess;
@@ -2483,7 +2483,7 @@ IOReturn RTL88WiFi::handleVIRTUAL_IF_CREATE(struct apple80211_virt_if_create_dat
     IOLog("RTL88WiFi: VIRTUAL_IF_CREATE role=%u mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
           d->role, d->mac[0], d->mac[1], d->mac[2], d->mac[3], d->mac[4], d->mac[5]);
 
-    /* Match AirportItlwm's lifecycle: let IO80211 perform the full
+    /* Match the reference IO80211 driver's lifecycle: let IO80211 perform the full
      * attach/configure/name sequence. This calls createVirtualInterface(),
      * then enableVirtualInterface(), and eventually yields p2p0/awdl0. */
     IO80211VirtualInterface *created = nullptr;
@@ -2538,7 +2538,7 @@ IOReturn RTL88WiFi::handleVIRTUAL_IF_DELETE(struct apple80211_virt_if_delete_dat
 IOReturn RTL88WiFi::handleSSID(bool set, struct apple80211_ssid_data *d)
 {
     if (!d) return kIOReturnBadArgument;
-    if (set) return kIOReturnSuccess; // AirportItlwm accepts this; ASSOCIATE carries the target.
+    if (set) return kIOReturnSuccess; // The reference IO80211 driver accepts this; ASSOCIATE carries the target.
     RTW88StateResult st = {}; IOReturn r = _ieee80211->cmdGetState(&st);
     setProperty("STA_LAST_RAW_STATE", (uint64_t)_ieee80211->rawState(), 32);
     setProperty("STA_LAST_REPORTED_STATE", (uint64_t)st.state, 32);
@@ -2557,7 +2557,7 @@ IOReturn RTL88WiFi::handleAUTH_TYPE(bool set, struct apple80211_authtype_data *d
     if (!d) return kIOReturnBadArgument;
     if (set) {
         if (d->version != APPLE80211_VERSION) return kIOReturnBadArgument;
-        /* AirportItlwm stores the Apple auth request verbatim.  Do not reject
+        /* The reference IO80211 driver stores the Apple auth request verbatim.  Do not reject
          * mixed WPA/WPA2 masks before the actual ASSOCIATE request arrives. */
         _authLower = d->authtype_lower;
         _authUpper = d->authtype_upper;
@@ -2696,7 +2696,7 @@ IOReturn RTL88WiFi::handleAP_IE_LIST(struct apple80211_ap_ie_data *d)
 {
     /* Ventura+ airportd passes an inline ie_data[1024] buffer (1032 bytes
      * total) and expects the associated AP's beacon/probe-response IE list,
-     * as AirportItlwm returns ni_rsnie_tlv.  Returning only our own RSN IE
+     * as the reference IO80211 driver returns ni_rsnie_tlv.  Returning only our own RSN IE
      * (no SSID element) makes airportd classify the network as hidden. */
     static_assert(sizeof(struct apple80211_ap_ie_data) == 8 + APPLE80211_NETWORK_DATA_MAX_IE_LEN,
                   "AP_IE_LIST ABI changed");
@@ -2736,7 +2736,7 @@ IOReturn RTL88WiFi::handleCIPHER_KEY(struct apple80211_key *key)
         return kIOReturnUnsupported;
     }
 
-    /* Match AirportItlwm semantics strictly:
+    /* Match the reference IO80211 driver semantics strictly:
      * key_flags == 4 -> PTK
      * key_flags == 0 -> GTK
      */
@@ -2757,7 +2757,7 @@ IOReturn RTL88WiFi::handleCIPHER_KEY(struct apple80211_key *key)
           key->key_len, ret);
     setProperty("STA_KEY_RAW_STATE", (uint64_t)_ieee80211->rawState(), 32);
     setProperty("STA_KEY_ASSOC_VISIBLE", _ieee80211->associatedVisible() ? kOSBooleanTrue : kOSBooleanFalse);
-    /* AirportItlwm v2.3 posts APPLE80211_M_RSN_HANDSHAKE_DONE after each
+    /* The reference IO80211 driver v2.3 posts APPLE80211_M_RSN_HANDSHAKE_DONE after each
      * successful PTK/GTK callback.  Do the same.  Waiting for *both* keys
      * before posting this event can deadlock Apple's supplicant if it expects
      * the PTK notification before it submits the GTK.  The Realtek backend
@@ -2775,7 +2775,7 @@ IOReturn RTL88WiFi::handleCIPHER_KEY(struct apple80211_key *key)
 
 IOReturn RTL88WiFi::handleDISASSOCIATE()
 {
-    /* AirportItlwm acknowledges DISASSOCIATE without tearing down AUTH/ASSOC.
+    /* The reference IO80211 driver acknowledges DISASSOCIATE without tearing down AUTH/ASSOC.
      * Its SCAN state also remains a scan rather than becoming a fake link-down
      * event.  Our raw SCANNING state is an implementation detail, so when no
      * infrastructure RUN latch exists, acknowledge the cleanup request without
@@ -2796,7 +2796,7 @@ IOReturn RTL88WiFi::handleDISASSOCIATE()
         setProperty("STA_DISASSOC_EXECUTED", kOSBooleanFalse);
         IOLog("RTL88WiFi: DISASSOCIATE acknowledged during disconnected scan (no teardown)\n");
         /* v9 accidentally called cmdDisconnect() here, which generated a real
-         * disconnected event and collapsed SCANNING to IDLE.  AirportItlwm's
+         * disconnected event and collapsed SCANNING to IDLE.  The reference IO80211 driver's
          * join path treats this cleanup as non-destructive while association
          * is being prepared. */
         return kIOReturnSuccess;
@@ -2840,7 +2840,7 @@ void RTL88WiFi::fillScanResultFromBSS(const RTW88BSS &b, struct apple80211_scan_
     d->version = APPLE80211_VERSION;
     d->asr_channel.version = APPLE80211_VERSION;
     d->asr_channel.channel = b.channel;
-    /* Match AirportItlwm's Ventura behavior: keep scan/current-network
+    /* Match the reference IO80211 driver's Ventura behavior: keep scan/current-network
      * channel flags deliberately conservative so CoreWiFi accepts them. */
     d->asr_channel.flags = APPLE80211_C_FLAG_ACTIVE |
                            APPLE80211_C_FLAG_20MHZ |
@@ -2861,7 +2861,7 @@ void RTL88WiFi::fillScanResultFromBSS(const RTW88BSS &b, struct apple80211_scan_
     const size_t ieLength = b.ies_len > sizeof(b.ies) ? sizeof(b.ies) : b.ies_len;
     d->asr_ie_len = 0;
     if (fullIEs) {
-        /* AirportItlwm's CURRENT_NETWORK is a scan-result-style object. Give
+        /* The reference IO80211 driver's CURRENT_NETWORK is a scan-result-style object. Give
          * CoreWiFi/locationd the complete BSS IE blob for the associated AP. */
         const size_t ieCopy = ieLength > sizeof(d->asr_ie_data) ? sizeof(d->asr_ie_data) : ieLength;
         if (ieCopy) {
@@ -2870,7 +2870,7 @@ void RTL88WiFi::fillScanResultFromBSS(const RTW88BSS &b, struct apple80211_scan_
         }
     } else {
         /* Preserve the already-working Ventura SCAN_RESULT contract: expose
-         * only the first RSN TLV, matching the audited AirportItlwm behavior. */
+         * only the first RSN TLV, matching the audited the reference IO80211 driver behavior. */
         for (size_t pos = 0; pos + 2 <= ieLength;) {
             const size_t n = (size_t)b.ies[pos + 1] + 2;
             if (n > ieLength - pos) break;
@@ -2909,7 +2909,7 @@ IOReturn RTL88WiFi::handleSCAN_RESULT(struct apple80211_scan_result **out)
     if (!out) return kIOReturnBadArgument;
     *out = nullptr;
 
-    /* Keep the Ventura/AirportItlwm pointer-to-pointer SCAN_RESULT ABI.
+    /* Keep the Ventura/the reference IO80211 driver pointer-to-pointer SCAN_RESULT ABI.
      * On Sonoma with the OCLP legacy wireless stack, CoreWiFi can skip
      * SCAN_REQ/SCAN_REQ_MULTIPLE entirely and query only the family cache.
      * If that cache is empty, perform exactly one demand-driven physical scan
@@ -2964,13 +2964,13 @@ IOReturn RTL88WiFi::handleSCAN_RESULT(struct apple80211_scan_result **out)
             }
         }
         _scanCursor = 0;
-        return 5; /* AirportItlwm end-of-list ABI */
+        return 5; /* The reference IO80211 driver end-of-list ABI */
     }
     if (ret) return ret;
 
     /* Sonoma's CoreWiFi derives the network name from the IE blob; with
      * only the RSN TLV it lists the associated AP as a "Hidden Network".
-     * AirportItlwm actually hands over the full beacon/probe IE blob
+     * The reference IO80211 driver actually hands over the full beacon/probe IE blob
      * (ni_rsnie_tlv holds every IE), so do the same on Sonoma and keep the
      * RSN-only Ventura contract unchanged. */
     fillScanResultFromBSS(b, &_scanResult, version_major >= 23);
@@ -3118,7 +3118,7 @@ void RTL88WiFi::systemWillShutdown(IOOptionBits specifier)
 
 UInt32 RTL88WiFi::hardwareOutputQueueDepth(IO80211Interface *interface)
 {
-    /* AirportItlwm reports 0 here; IO80211 owns the queueing policy. */
+    /* The reference IO80211 driver reports 0 here; IO80211 owns the queueing policy. */
     return 0;
 }
 
@@ -3171,13 +3171,13 @@ void RTL88WiFi::kickGatedOutput()
 
 SInt32 RTL88WiFi::performCountryCodeOperation(IO80211Interface *interface, IO80211CountryCodeOp op)
 {
-    /* Match AirportItlwm: acknowledge IO80211's country-code operation. */
+    /* Match the reference IO80211 driver: acknowledge IO80211's country-code operation. */
     return kIOReturnSuccess;
 }
 
 SInt32 RTL88WiFi::enableFeature(IO80211FeatureCode feature, void *data)
 {
-    /* Match AirportItlwm: AWDL service initialization does not depend on
+    /* Match the reference IO80211 driver: AWDL service initialization does not depend on
      * acknowledging undocumented feature codes. Keep this truthful and
      * conservative now that the diagnostic feature-gate test is complete. */
     if (feature == kIO80211Feature80211n)
@@ -3189,7 +3189,7 @@ SInt32 RTL88WiFi::monitorModeSetEnabled(IO80211Interface *interface,
                                             bool enabled,
                                             UInt32 mode)
 {
-    /* No monitor backend yet, but AirportItlwm returns success for this SPI. */
+    /* No monitor backend yet, but the reference IO80211 driver returns success for this SPI. */
     return kIOReturnSuccess;
 }
 
@@ -3281,7 +3281,7 @@ static bool rtw88IsAWDLActionFrame(const uint8_t *frame, uint32_t len,
     return true;
 }
 
-/* MacKernelSDK only carries an opaque/empty declaration for packet_info_tag.
+/* The kernel SDK only carries an opaque/empty declaration for packet_info_tag.
  * Reserve a reasonably sized, zeroed backing store so IO80211 never reads
  * beyond a one-byte empty C++ placeholder if Ventura consults private fields. */
 static packet_info_tag *rtw88ZeroPacketInfo(uint8_t (&storage)[64])
@@ -3437,7 +3437,7 @@ void RTL88WiFi::setLinkStatus(UInt32 status)
 {
     /* RTW88RxDelegate entry point.  Route it through the full controller
      * override so registry link properties and IO80211 interface state change
-     * together, as in AirportItlwm. */
+     * together, as in the reference IO80211 driver. */
     (void)setLinkStatus(status, nullptr, 0, nullptr);
 }
 

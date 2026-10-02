@@ -1,4 +1,4 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
 #include "RTL88WiFiInterface.hpp"
 #include <sys/kpi_mbuf.h>
@@ -23,7 +23,7 @@ UInt32 RTL88WiFiInterface::inputPacket(mbuf_t packet, UInt32 length,
     size_t len = mbuf_len(packet);
 
     /*
-     * Match AirportItlwm's EAPOL submission path.
+     * Match the reference IO80211 driver's EAPOL submission path.
      *
      * Apple RSN needs EAPOL (EtherType 0x888E) delivered through
      * IO80211Interface with the real mbuf length.  Normal Ethernet

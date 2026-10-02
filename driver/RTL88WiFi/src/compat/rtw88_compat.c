@@ -130,7 +130,7 @@ void rtw88_hex_dump(const char *prefix, const void *buf, size_t len)
 /*  Symbols not exported by macOS 15+ KPIs — provided internally       */
 /* ------------------------------------------------------------------ */
 
-/* fls: declared extern in MacKernelSDK libkern.h but not KPI-exported */
+/* fls: declared extern in the kernel SDK's libkern.h but not KPI-exported */
 int fls(unsigned int x)
 {
     return x ? (32 - __builtin_clz(x)) : 0;

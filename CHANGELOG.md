@@ -2,25 +2,30 @@
 
 ## 1.0.0 — 2026-10-02
 
-First version under the independent RTL88WiFi name. Includes every fix from
-our prior experimental builds through r11, with the complete maintained
-source and five host validation suites.
+First release under the RTL88WiFi name.
 
-- Rename the kext/executable to `RTL88WiFi`, the bundle ID to
-  `io.github.x1ren41l.RTL88WiFi`, and the native controller/interface classes
-  to `RTL88WiFi` / `RTL88WiFiInterface`.
-- Restart versioning at 1.0.0; build identity
+- Driver, executable and bundle renamed to `RTL88WiFi`
+  (`io.github.x1ren41l.RTL88WiFi`), with native controller/interface classes
+  `RTL88WiFi` / `RTL88WiFiInterface`. Build identity
   `1.0.0-rtl88wifi-r11-20261002`.
-- Include r10's 64-packet output pull limit, experimental outputStart gate,
-  multicast/NoAck RX reorder bypass, and scan/beacon TIM and padding fixes.
-- Include r11's TX-stall/BE-ring gate, resume and timer safety paths, and
-  queue drop/stall counters. The r11 change is not yet hardware-tested.
-- Retain all earlier WPA2/group-rekey, peer capability, memory, station,
-  firmware, scan, disconnect-reason, RX security and diagnostic fixes.
-- Update OpenCore paths and migration instructions; preserve licenses,
-  credits and source provenance.
+- WPA2 handshake retries, key installation and group rekeys fixed; stable
+  SNonce; idempotent key install.
+- Router HT/VHT capabilities parsed and used (5 GHz at line rate).
+- Memory, firmware-bounds and station-lifetime fixes.
+- Correct disconnect reasons, Sonoma-format network info, SSIDs kept in scan
+  results, AP IE list ABI fix.
+- Beacon TIM kept for the connected network and scan padding no longer
+  copied (hidden-network label after wakes and network switches).
+- Undecrypted/plaintext frames on protected links dropped; FragAttacks
+  A-MSDU check; multicast and NoAck QoS traffic bypass RX reordering.
+- Output-pull limit and two experimental output gates. On the current
+  IO80211 push data path these gates do not engage; they are kept for
+  diagnostics.
+- Built-in `DiagnosticLog` with queue drop/stall counters.
+- Added `tools/rtl88wifi-check.sh`, `docs/COMPATIBILITY.md` and issue
+  templates for compatibility reports.
 
-The r10 predecessor was hardware-tested on RTL8821CE / Sonoma 14.8.9.
-The renamed 1.0.0 package needs a new hardware boot/load check. The measured
-remaining heavy-load queue drops and unsupported features are documented in
-README.md. This release does not claim upstream release numbering.
+Hardware verification (RTL8821CE, Sonoma 14.8.9): load and join, ~15 minutes
+of load and idle without link drops, 0% idle ping loss, `networkQuality`
+86–87 down / 89–105 up Mbps. Known remaining issue: queue drops under heavy
+parallel uploads (see README).

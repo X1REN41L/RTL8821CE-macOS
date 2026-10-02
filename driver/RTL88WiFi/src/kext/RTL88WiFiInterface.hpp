@@ -1,6 +1,6 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
- * RTL88WiFiInterface.hpp — thin IO80211Interface, mirrors AirportItlwmInterface.
+ * RTL88WiFiInterface.hpp — thin IO80211Interface, mirrors the reference IO80211 interface.
  *
  * This class does almost nothing on its own: it's the object macOS's
  * network stack / CoreWLAN sees as "the Wi-Fi interface". All real work
@@ -10,7 +10,7 @@
  */
 #pragma once
 
-class IO80211FlowQueue;  /* falta en este snapshot del MacKernelSDK; solo se usa como puntero */
+class IO80211FlowQueue;  /* falta en este snapshot del kernel SDK; solo se usa como puntero */
 #include <IOKit/80211/IO80211Interface.h>
 
 class RTL88WiFi;

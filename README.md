@@ -1,92 +1,111 @@
 # RTL88WiFi
 
-Native Wi-Fi for **Realtek RTL8821CE** (and the rest of the rtw88 PCIe family)
-on Hackintosh. The card works like a real Mac's AirPort card: it appears in the
-Wi-Fi menu and System Settings, remembers networks, auto-joins and reconnects
-after sleep. You don't need a client app, and SIP stays enabled.
+**Native macOS Wi-Fi for Realtek RTL8821CE, RTL8822BE and RTL8822CE PCIe cards
+on Hackintosh laptops and desktops.**
 
-**RTL88WiFi 1.0.0** is an independently maintained derivative of
-[AirPort_RTW88](https://github.com/xnoah222/Realtek-AirPort-Family) by xnoah222,
-with its own driver name, bundle identifier and version sequence. It is based
-on that source, the Feixiao macOS port and Linux rtw88. This repository is
-maintained by X1REN41L and is not an official continuation of those projects.
+The card works like a real Mac's AirPort card. It shows up in the Wi-Fi menu and
+System Settings, remembers networks, auto-joins, and reconnects after sleep.
+You don't need a client app, and SIP stays enabled.
 
-Version 1.0.0 includes every fix through our r11 build. The preceding r10 build
-was tested on RTL8821CE with macOS Sonoma 14.8.9.
-The r11 TX-stall gate has passed host checks and compilation, but still needs
-hardware testing. The renamed 1.0.0 bundle still needs a hardware boot test;
-the performance figures
-below describe the earlier tested builds. Source and license details are in
-[SOURCE-NOTICES.md](SOURCE-NOTICES.md).
+| | |
+|---|---|
+| **Version** | 1.0.0 (`io.github.x1ren41l.RTL88WiFi`) |
+| **Verified on hardware** | RTL8821CE, macOS Sonoma 14.8.9 |
+| **Chips the kext matches** | RTL8821CE, RTL8822BE, RTL8822CE (PCIe) |
+| **Check your machine** | `bash tools/rtl88wifi-check.sh` ([details](#check-your-machine)) |
+| **Report your result** | [Compatibility report](../../issues/new?template=compatibility-report.yml) |
 
 > [!WARNING]
-> This is an experimental kernel extension, tested on one laptop with one
-> router. Keep a bootable copy of your current EFI on a USB stick before you
-> change anything.
+> This is a kernel extension in active development. Keep a bootable copy of
+> your current EFI on a USB stick before you change anything.
 
 ---
 
-## Before and after
+## Results
 
 <p align="center">
-  <img src="docs/images/speedtest-2.0.1.png" alt="Historical speed test of our earlier RTL8821CE build: 93.40 Mbps down, 92.45 Mbps up, 7 ms ping" width="420"><br>
-  <b>🏆 RTL8821CE on macOS Sonoma: 93.4 Mbps down / 92.5 Mbps up, 7 ms ping. Full line speed over Wi-Fi.</b>
+  <img src="docs/images/speedtest-2.0.1.png" alt="Speed test on RTL8821CE: 93.40 Mbps down, 92.45 Mbps up, 7 ms ping" width="420"><br>
+  <b>RTL8821CE on macOS Sonoma: 93.4 Mbps down / 92.5 Mbps up on a 100 Mbps line (earlier build of this driver).</b>
 </p>
 
-| | Original source build (AirPort_RTW88 2.0.0) | Our tested builds before the rename |
-|---|---|---|
-| **Connection** | Kept dropping and reconnecting | Stays connected |
-| **Download (5 GHz)** | 7.2 Mbps | **92.1 Mbps** (~13× faster) |
-| **Upload (5 GHz)** | 20.7 Mbps | **98.6 Mbps** (~5× faster) |
-| **2.4 GHz** | not measured | 41.7 Mbps down / 58.2 Mbps up |
-| **Responsiveness under load** | 1.9–2.5 s delays, ~25% of pings lost | ~5 ms, no loss |
-| **Sleep / wake** | not measured | Reconnects on its own in ~3 seconds |
+RTL88WiFi 1.0.0 on the test laptop (RTL8821CE, 5 GHz channel 36, 100 Mbps
+line, 2026-10-02):
 
-Measured with macOS `networkQuality` on a 100 Mbps internet line. Ethernet on
-the same line measured 82.7 down / 96.3 up, so Wi-Fi now runs at full line
-speed.
+| Test | Result |
+|---|---|
+| Connection over ~15 minutes of load and idle | No drops |
+| Idle ping to the router, 480 packets | 0% loss, 4.6–6.6 ms average |
+| `networkQuality` download | 86.5–86.9 Mbps |
+| `networkQuality` upload | 89.4–105.1 Mbps |
+| 4 parallel 40 MB uploads + 4,000 UDP probes | 0.15–0.55% UDP loss |
+| Sleep / wake (tested on the preceding build, same wake code) | Reconnects on its own in about 3–5 seconds |
+
+Ethernet on the same line measured 82.7 down / 96.3 up, so Wi-Fi runs at full
+line speed. Before the fixes in this driver, the same card managed 7.2 Mbps
+down, kept dropping the connection, and lost about 25% of pings under load.
 
 ---
 
-## Supported Wi-Fi chips
+## Compatibility
 
 PCIe cards only. USB and SDIO Realtek adapters are **not** supported.
 
 | Chip | PCI ID | Status |
 |---|---|---|
-| **RTL8821CE** | `10ec:c821`, `10ec:b821` | ✅ Tested, daily driver |
-| RTL8822BE | `10ec:b822` | ⚠️ Supported by the kext (firmware included), untested |
-| RTL8822CE | `10ec:c822`, `10ec:c82f` | ⚠️ Supported by the kext (firmware included), untested |
-
-**Find your card's ID:** on macOS, look at Hackintool → **PCIe**, or run
-`ioreg -l | grep -iE '"vendor-id"|"device-id"'`. On Windows, use Device
-Manager → Hardware IDs. On Linux, use `lspci -nn`. Realtek's vendor ID is
-`10ec`.
-
-## Supported macOS versions
+| **RTL8821CE** | `10ec:c821`, `10ec:b821` | ✅ Verified (daily use) |
+| RTL8822BE | `10ec:b822` | 🟡 Matched by the kext, firmware included, needs a report |
+| RTL8822CE | `10ec:c822`, `10ec:c82f` | 🟡 Matched by the kext, firmware included, needs a report |
 
 | macOS | Status |
 |---|---|
-| **Sonoma 14.8.9** | ✅ Tested, daily driver |
-| Sonoma 14.4 and later | ⚠️ Should work with this guide, untested |
-| Sequoia 15 / Tahoe 26 | ⚠️ Same kext setup as Sonoma, untested |
-| Ventura 13.7.7 – 13.7.8 | ⚠️ Use only `RTL88WiFi.kext` (skip the other three kexts and the Block entry), untested |
+| **Sonoma 14.8.9** | ✅ Verified |
+| Sonoma 14.4 and later | 🟡 Same setup, needs a report |
+| Sequoia 15 / Tahoe 26 | 🟡 Same setup, needs a report |
+| Ventura 13.7.7 – 13.7.8 | 🟡 Use only `RTL88WiFi.kext` (skip the other three kexts and the Block entry), needs a report |
 | Monterey 12 and older | ❌ Not supported |
+
+Every confirmed machine is listed in
+[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). If your chip or macOS version
+is marked 🟡, your report moves it to ✅ for everyone.
+
+### Check your machine
+
+Run the check script from this repository. It is read-only and changes nothing.
+
+```sh
+bash tools/rtl88wifi-check.sh           # before installing: is my chip and macOS suitable?
+bash tools/rtl88wifi-check.sh --speed   # after installing: is it loaded, connected and fast?
+```
+
+It checks:
+
+- your macOS version;
+- that a supported Realtek chip is present (by PCI ID);
+- that the required kexts are loaded and no second Wi-Fi driver is;
+- the link state, signal strength and default route;
+- with `--speed`, a router ping and a `networkQuality` run.
+
+At the end it prints a report block without MAC addresses, IP addresses or
+network names. Paste that block into a
+[compatibility report](../../issues/new?template=compatibility-report.yml).
+
+You can also find the chip ID by hand. On macOS run
+`ioreg -l | grep -iE '"vendor-id"|"device-id"'`. On Windows use Device Manager →
+Hardware IDs, and on Linux run `lspci -nn`. Realtek's vendor ID is `10ec`.
 
 ---
 
 ## What works
 
-- WPA2-Personal (AES)
-- WPA3/WPA2 **transition** mode (connects as WPA2)
+- WPA2-Personal (AES), and WPA3/WPA2 **transition** mode (connects as WPA2)
 - Open networks
 - 2.4 GHz and 5 GHz (80 MHz on 5 GHz)
 - Wi-Fi menu, signal strength, joining, saved networks, auto-join, switching networks
 - Router key changes (group rekeys) without disconnects
 - Sleep/wake (lid and Apple menu → Sleep), with automatic reconnect
-- SIP enabled; no root patching
+- SIP enabled, no root patching
 
-## What doesn't work
+## What doesn't work yet
 
 - ❌ WPA3-only (SAE) networks
 - ❌ WPA2/WPA3 Enterprise (work/school logins)
@@ -97,26 +116,28 @@ Manager → Hardware IDs. On Linux, use `lspci -nn`. Realtek's vendor ID is
 
 ## Known issues
 
-- **Heavy upload load.** r10 reduced queue drops in a four-stream upload test
-  from 38,663 to 54; a heavier networkQuality run still dropped about 1.2% of
-  transmitted packets. Version 1.0.0 includes r11's subsequent TX-stall gate,
-  whose effect still needs a hardware test. Cloudflare measured
-  90.7 Mbps down / 91.8 Mbps up and
-  0.4% packet loss on the tested r10 build.
+- **Heavy parallel uploads.** Under sustained multi-stream upload (for example
+  `networkQuality` or several large uploads at once), macOS's 256-packet
+  output queue can still overflow and drop some packets. Throughput stays at
+  line rate, and TCP recovers. Results vary a lot from run to run: in the
+  release check, `networkQuality` lost 1.0–3.8% of offered packets at the
+  queue. In one earlier run of the four-upload test, far more were dropped
+  while goodput still held.
+- **"Hidden network" label.** After some wakes or network switches, macOS can
+  label your network as hidden in Wi-Fi settings. The connection itself is not
+  affected. 1.0.0 keeps the beacon information macOS uses for this check; the
+  label did not appear after the tested wake on the preceding build.
 - **2.4 GHz full-speed upload.** The driver briefly throttles sending. This is
   flow control, not a freeze.
-- **Hidden-network label.** Version 1.0.0 includes the r10 beacon/TIM and scan
-  padding fixes. The user reported a clean wake with r10; broader repeated
-  wake and network-switch validation remains pending.
 
 ---
 
-## Setup guide (OpenCore, macOS Sonoma)
+## Setup guide (OpenCore)
 
 ### What you need
 
 - A working OpenCore EFI that already boots macOS and loads **Lilu.kext**
-- [ProperTree](https://github.com/corpnewt/ProperTree) to edit `config.plist`
+- Any plist editor for `config.plist`
 - This repository: **Code → Download ZIP**
 
 ### Step 1: back up your EFI
@@ -135,12 +156,8 @@ Copy these four folders from [`Kexts/`](Kexts) into `EFI/OC/Kexts/`:
 | `IO80211FamilyLegacy.kext` | 1200.12.2b1 | Legacy Apple Wi-Fi family the driver plugs into |
 | `RTL88WiFi.kext` | **1.0.0** | The Realtek driver (firmware is built in) |
 
-When upgrading from our earlier build, remove or disable the
-`AirPort_RTW88.kext` entry and replace it with `RTL88WiFi.kext` and executable
-`Contents/MacOS/RTL88WiFi`. Enable only one Realtek Wi-Fi driver. Disable any
-other Wi-Fi kexts you were using (itlwm, AirportItlwm, Broadcom patches).
-The new bundle identifier is `io.github.x1ren41l.RTL88WiFi`; version 1.0.0 starts
-our own release sequence.
+Remove or disable every other Wi-Fi kext you were using. Only one Wi-Fi driver
+may be enabled for the card.
 
 ### Step 3: `Kernel → Add`
 
@@ -158,8 +175,8 @@ empty, and set `Enabled = True`.
 
 > [!IMPORTANT]
 > `IO80211FamilyLegacy.kext` contains an `AirPortBrcmNIC.kext` plugin. **Do
-> not add it**, because it is only for Broadcom cards. ProperTree's OC Snapshot
-> adds it automatically, so delete that entry afterwards.
+> not add it**, because it is only for Broadcom cards. Snapshot tools add it
+> automatically, so delete that entry afterwards.
 
 ### Step 4: `Kernel → Block`
 
@@ -178,7 +195,7 @@ Without this block, macOS loads its own networking stack and Wi-Fi won't
 appear.
 
 **Shortcut:** [`docs/opencore-wifi-snippet.plist`](docs/opencore-wifi-snippet.plist)
-contains steps 3 and 4 ready to copy into ProperTree.
+contains steps 3 and 4, ready to copy into your `config.plist`.
 
 ### Step 5: security settings
 
@@ -193,14 +210,16 @@ contains steps 3 and 4 ready to copy into ProperTree.
 2. Reboot into macOS.
 3. Open the Wi-Fi menu, pick your network and enter the password.
 
-### Step 7: check it loaded
+### Step 7: verify
 
 ```sh
-kextstat | grep -E 'RTL88WiFi|IO80211FamilyLegacy|IOSkywalk|AMFIPass'
+bash tools/rtl88wifi-check.sh --speed
 ```
 
-You should see `io.github.x1ren41l.RTL88WiFi (1.0.0)` plus the other three. Wi-Fi shows
-as connected under **System Settings → Network**.
+You should see `io.github.x1ren41l.RTL88WiFi (1.0.0) loaded`, an active
+interface, and no failures. Then please
+[send a compatibility report](../../issues/new?template=compatibility-report.yml),
+especially if your chip, laptop or macOS version is not listed yet.
 
 ### Recommended for laptops
 
@@ -218,10 +237,10 @@ sudo pmset -a powernap 0 proximitywake 0 standby 0 hibernatemode 0
 
 | Problem | What to check |
 |---|---|
-| No Wi-Fi at all | The `Kernel → Block` entry exists and is enabled; all four kexts are enabled, in order, with `MinKernel 23.0.0`; run the step 7 command |
+| No Wi-Fi at all | The `Kernel → Block` entry exists and is enabled; all four kexts are enabled, in order, with `MinKernel 23.0.0`; run `tools/rtl88wifi-check.sh` |
 | Panic or boot stops after adding the kexts | Boot from your backup USB. Make sure `AirPortBrcmNIC.kext` is **not** in `Kernel → Add` and `SecureBootModel` is `Disabled` |
 | Networks appear but joining fails | WPA3-only, Enterprise and hidden networks aren't supported. Set the router to WPA2-Personal (AES) or WPA2/WPA3 mixed mode |
-| Need the driver log | `ioreg -l -w0 \| grep DiagnosticLog` (contains no passwords or traffic) |
+| Need the driver log | `ioreg -l -w0 \| grep DiagnosticLog` (contains no passwords or traffic); attach it to your issue |
 
 ---
 
@@ -237,14 +256,14 @@ make rtl88wifi
 
 The kext is written to `driver/RTL88WiFi/build/out/RTL88WiFi.kext`. The
 Realtek firmware in `driver/RTL88WiFi/firmware/` is compressed into the kext
-during the build. Use `make rtl88wifi` only: on Sonoma the kext must be loaded
-by OpenCore, not with `make install` or `make load`.
+during the build. Use `make rtl88wifi` only: on Sonoma and later the kext must
+be loaded by OpenCore, not with `make install` or `make load`.
 
-The five host suites are documented in [tests/README.md](tests/README.md).
-Build, identity, source-preservation and isolated OpenCore validation results
-are recorded in [docs/validation-1.0.0.json](docs/validation-1.0.0.json).
+The five host test suites are described in [tests/README.md](tests/README.md).
+Build and identity checks are recorded in
+[docs/validation-1.0.0.json](docs/validation-1.0.0.json).
 
-Fixes included in RTL88WiFi 1.0.0:
+### What 1.0.0 fixes
 
 - **WPA2:** correct handshake retries and key installation, plus group rekeys.
   This fixes the constant disconnects.
@@ -254,44 +273,36 @@ Fixes included in RTL88WiFi 1.0.0:
   station lifetime).
 - **macOS integration:** correct disconnect reasons (no auto-join loops after
   manual joins or sleep), Sonoma-format network info, SSIDs kept in scan
-  results. Beacon TIM information and associated-network beacons keep the
-  broadcast/hidden verdict accurate after wakes and network switches.
+  results, beacon TIM kept for the connected network.
 - **Security:** undecrypted or plaintext frames on a protected link are
   dropped, and the FragAttacks A-MSDU check is added.
-- **Upload queue:** limits each pull batch to 64 packets, reducing local
-  output-queue drops during parallel uploads. Some drops remain under heavier
-  load. r11 gates output when TX is stalled or the BE ring is nearly full;
-  that change still needs hardware testing.
 - **RX reorder:** multicast and NoAck QoS traffic bypass the per-TID reorder
-  window, matching mac80211 behavior.
+  window.
 - **Diagnostics:** a built-in log readable via `ioreg` (`DiagnosticLog`),
-  including r11 queue drop/stall counters and gate transitions.
+  including queue drop and stall counters.
 
 ---
 
-## Help test and develop
+## Contributing
 
-Reports and pull requests for RTL88WiFi are welcome, especially for:
+Compatibility reports are the most useful contribution right now. Each
+confirmed chip, laptop or macOS version goes into
+[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Especially wanted:
 
 - **RTL8822BE / RTL8822CE** cards
 - **Sequoia and Tahoe**
+- Desktop PCIe cards and other laptop models
 - Other routers and security modes
-- Open items: WPA3-only (SAE), Enterprise, hidden networks, and the
-  remaining drops under heavy parallel uploads
 
-When you open an issue, include your **chip and PCI ID**, **laptop/board**,
-**macOS version**, **router security mode and band**, what works and what
-doesn't (including sleep/wake), and the step 7 output.
+Pull requests are welcome for the open items: WPA3-only (SAE), Enterprise,
+hidden networks, AWDL, and drops under heavy parallel uploads.
 
 ## Test machine
 
-HP 15-da0003tu (i3-8130U, UHD 620), SMBIOS `MacBookPro14,1`, OpenCore 1.0.7,
-macOS Sonoma 14.8.9 (23J631), RTL8821CE, WPA2/WPA3 mixed-mode router.
+HP 15-da0003tu laptop (i3-8130U, UHD 620), SMBIOS `MacBookPro15,2`,
+OpenCore 1.0.7, macOS Sonoma 14.8.9 (23J631), RTL8821CE, WPA2/WPA3 mixed-mode
+router.
 
-## Source attribution and licensing
+## License
 
-RTL88WiFi is maintained separately, with its own releases and issue tracker.
-It is based on AirPort_RTW88 by xnoah222 and retains the underlying third-party
-source and applicable notices. Attribution records source origin and does not
-imply affiliation or endorsement. See [SOURCE-NOTICES.md](SOURCE-NOTICES.md),
-the preserved [upstream credits](docs/upstream-credits.md), and [LICENSE](LICENSE).
+GPL-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

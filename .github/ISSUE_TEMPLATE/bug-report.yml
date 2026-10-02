@@ -1,0 +1,25 @@
+name: Bug report
+description: Something that used to work, or should work, is broken.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Check script report
+      description: Output block of `bash tools/rtl88wifi-check.sh`.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Driver log
+      description: Output of `ioreg -l -w0 | grep DiagnosticLog` taken right after the problem (contains no passwords or traffic).
+      render: text

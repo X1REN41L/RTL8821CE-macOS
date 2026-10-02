@@ -176,7 +176,7 @@ void RTW88AWDLManager::setVirtualInterface(UInt role, IO80211VirtualInterface *i
         _fallbackDeadlineUS = now + 1500000ULL;
         _appleControlMask |= kAppleCtlVIF;
         _lastAppleControlUS = now;
-        /* AirportItlwm's useful lesson is lifecycle/control ownership: give
+        /* The reference IO80211 driver's useful lesson is lifecycle/control ownership: give
          * IO80211 a grace period to provide its AWDL template/sequence before
          * falling back to our OpenAWDL-derived bootstrap. */
         publishStats();

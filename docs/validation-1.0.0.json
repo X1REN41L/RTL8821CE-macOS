@@ -18,10 +18,10 @@
   "no_previous_driver_identity_in_binary": true,
   "no_local_home_paths_in_binary": true,
   "ocvalidate_1.0.7": "No issues found (isolated temporary EFI)",
-  "preserved_license_and_upstream_credits": true,
-  "hardware_boot_test": "Pending for renamed bundle; r11 gate untested on hardware; r10 predecessor was hardware-tested",
+  "hardware_boot_test": "Passed 2026-10-02 on RTL8821CE / Sonoma 14.8.9: loaded UUID 142FF73E-DCA5-3C57-B879-B2BA93B0AA06, joined WPA2 5 GHz, ~15 min load+idle without link drops, idle router ping 0% loss, networkQuality 86.5-86.9 down / 89.4-105.1 up Mbps",
   "installed_targets": [
     "repository Kexts/RTL88WiFi.kext"
   ],
-  "efi_writes": false
+  "efi_writes": false,
+  "license_and_source_notices_preserved": true
 }

@@ -19,7 +19,7 @@
 #endif
 
 #ifdef KERNEL
-/* In KERNEL (C++) builds, use MacKernelSDK's string.h which provides
+/* In KERNEL (C++) builds, use the kernel SDK's string.h which provides
  * memcpy/memmove/etc. as compiler builtins with bounds checking. */
 #include <string.h>
 #else

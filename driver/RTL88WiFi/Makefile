@@ -322,8 +322,8 @@ clean:
 #   The kext loads via OpenCore injection before the OS, so it works
 #   in BaseSystem automatically.  rtw88ctl is a standalone binary;
 #   copy it to the USB installer's /usr/local/bin or run from a path.
-# Agregar esto al final del Makefile de Feixiao (antes de la seccion de
-# "Directory creation"), y copiar antes los 4 archivos nuevos a src/kext/:
+# RTL88WiFi native IO80211 target. Its controller and interface sources
+# live in src/kext/:
 #   RTL88WiFi.hpp  RTL88WiFi.cpp
 #   RTL88WiFiInterface.hpp  RTL88WiFiInterface.cpp
 

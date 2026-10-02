@@ -1,0 +1,55 @@
+name: Compatibility report
+description: Tell us whether RTL88WiFi works on your chip, machine and macOS version.
+title: "[Compat] <chip> / <laptop or board> / macOS <version>"
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Run `bash tools/rtl88wifi-check.sh --speed` and paste the report block below.
+        The block contains no MAC addresses, IP addresses or network names.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works with issues
+        - Does not work
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Check script report
+      description: The block between "copy from here" and "end".
+      render: markdown
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Laptop or motherboard model
+      placeholder: e.g. HP 15-da0003tu, or desktop with an M.2/PCIe adapter card
+    validations:
+      required: true
+  - type: input
+    id: router
+    attributes:
+      label: Band and router security mode
+      placeholder: e.g. 5 GHz, WPA2/WPA3 mixed
+  - type: checkboxes
+    id: features
+    attributes:
+      label: What did you test?
+      options:
+        - label: Join a network from the Wi-Fi menu
+        - label: Reconnect after sleep/wake
+        - label: Switch between networks
+        - label: 2.4 GHz
+        - label: 5 GHz
+  - type: textarea
+    id: issues
+    attributes:
+      label: Problems, if any
+      description: What went wrong. For connection problems, attach the output of `ioreg -l -w0 | grep DiagnosticLog`.

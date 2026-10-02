@@ -29,7 +29,7 @@ struct firmware {
 };
 
 /* ------------------------------------------------------------------ */
-/*  zlib allocators — mirrors itlwm/itl80211/zutil.c exactly          */
+/*  zlib allocators — mirrors the common kernel zlib glue exactly          */
 /* ------------------------------------------------------------------ */
 
 typedef struct z_mem {
@@ -60,7 +60,7 @@ static void rtw88_zcfree(voidpf opaque, voidpf ptr)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Decompress one blob — mirrors itlwm's uncompressFirmware()        */
+/*  Decompress one blob — mirrors the usual firmware decompressor        */
 /* ------------------------------------------------------------------ */
 
 static int rtw88_decompress(uint8_t *dest, uint32_t *dest_len,

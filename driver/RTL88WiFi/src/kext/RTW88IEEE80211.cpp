@@ -1,4 +1,4 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 // RTW88IEEE80211.cpp — 802.11 state machine
 
@@ -1372,7 +1372,7 @@ void RTW88IEEE80211::processRxMgmt(struct sk_buff *skb)
             if (_parent)
                 _parent->setLinkStatus(kIONetworkLinkValid);
             /* IO80211/CoreWiFi needs the asynchronous deauth notification,
-             * not only a link-state change.  AirportItlwm forwards the same
+             * not only a link-state change.  The reference IO80211 driver forwards the same
              * net80211 event as APPLE80211_M_DEAUTH_RECEIVED. */
             if (_delegate)
                 _delegate->rtw88Event(kRTW88EventDeauth, &_deauthReason);
@@ -2681,7 +2681,7 @@ IOReturn RTW88IEEE80211::cmdConnect(const char *ssid, const char *password, cons
 {
     if (!ssid || !ssid[0] || strnlen(ssid, 33) > 32) return kIOReturnBadArgument;
 
-    /* AirportItlwm accepts ASSOCIATE while net80211 is in SCAN.  Returning
+    /* The reference IO80211 driver accepts ASSOCIATE while net80211 is in SCAN.  Returning
      * EBUSY here made CoreWiFi abort the join and issue DISASSOCIATE while our
      * raw state was still SCANNING. Preserve the request and return success
      * immediately; scanDone() continues
@@ -2741,7 +2741,7 @@ IOReturn RTW88IEEE80211::cmdConnect(const char *ssid, const char *password, cons
     _rssi = target->rssi < 0 && target->rssi >= -127 ? target->rssi : -100;
     IOLockUnlock(_bssLock);
 
-    /* AirportItlwm drives association from the Apple80211 AUTH/RSN request,
+    /* The reference IO80211 driver drives association from the Apple80211 AUTH/RSN request,
      * not solely from security metadata recovered during scan.  Do the same:
      * if Apple's association RSN IE selects CCMP-PSK, make that authoritative
      * for this attempt.  This prevents a perfectly valid WPA2 network from
@@ -3080,7 +3080,7 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
     IOLog("rtw88: associated! AID=%u\n", aid);
     _assocAID = aid;
     /* From this point until a real deauth/disconnect, IO80211 must observe
-     * the infrastructure interface as RUN.  AirportItlwm gets this persistence
+     * the infrastructure interface as RUN.  The reference IO80211 driver gets this persistence
      * from net80211's IEEE80211_S_RUN state; keep an explicit latch because
      * rtw88 has additional transient implementation states. */
     _associatedVisible = true;
@@ -3169,10 +3169,10 @@ void RTW88IEEE80211::processAssocResponse(struct sk_buff *skb)
         /* Apple RSN Supplicant needs the station in RUN so its EAPOL socket can
          * receive the AP's handshake frames.  The link becomes usable only after
          * CIPHER_KEY installs the PTK/GTK, but exposing RUN here mirrors
-         * AirportItlwm's net80211 flow. */
+         * the reference IO80211 driver's net80211 flow. */
         _state = RTW88_STATE_CONNECTED;
         /* Our Apple-RSN path injects EAPOL through the normal BSD Ethernet
-         * interface, unlike AirportItlwm's net80211 path.  The interface must
+         * interface, unlike the reference IO80211 driver's net80211 path.  The interface must
          * therefore be LINK_UP for EAPOLController to receive/send 0x888e.
          * The TX gate below still drops ordinary traffic until PTK+GTK exist,
          * so exposing LINK_UP here does not leak unprotected IP traffic.  This
@@ -3446,7 +3446,7 @@ IOReturn RTW88IEEE80211::cmdInstallExternalKey(bool pairwise, uint8_t keyidx, ui
           pairwise ? "PTK" : "GTK", _externalPTKInstalled, _externalGTKInstalled);
 
     /* The controlled port becomes valid only once both keys are present.
-     * This mirrors AirportItlwm's setGTK()->ieee80211_set_link_state(UP)
+     * This mirrors the reference IO80211 driver's setGTK()->ieee80211_set_link_state(UP)
      * sequencing while tolerating an unusual key callback order. */
     if (_externalPTKInstalled && _externalGTKInstalled) {
         if (_parent)
@@ -3485,7 +3485,7 @@ IOReturn RTW88IEEE80211::cmdDisconnect()
 {
     clearDeferredJoin();
     /* A disconnected SCANNING state is not an association that can be torn
-     * down.  AirportItlwm's net80211 stays in SCAN here; it does not emit a
+     * down.  The reference IO80211 driver's net80211 stays in SCAN here; it does not emit a
      * spurious link-disconnected event.  Cancel any queued join but preserve
      * the scan transaction so CoreWiFi can receive SCAN_DONE cleanly. */
     if (_state == RTW88_STATE_SCANNING && !_associatedVisible &&
@@ -3510,7 +3510,7 @@ IOReturn RTW88IEEE80211::cmdDisconnect()
     cancelAuthentication();
     /* r7: a host-requested disassociation is voluntary.  Report
      * APPLE80211_REASON_ASSOC_LEAVING (8) as the link-down/DEAUTH reason, as
-     * AirportItlwm's setDISASSOCIATE does.  A zero reason made airportd log
+     * the reference IO80211 driver's setDISASSOCIATE does.  A zero reason made airportd log
      * "Unexpected link down" and start auto-join, which then tore down the
      * user's new join.  cmdConnect resets the reason to 0. */
     _deauthReason = 8;

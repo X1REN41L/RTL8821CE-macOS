@@ -1,12 +1,12 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * RTL88WiFi.hpp — IO80211Controller subclass; native Wi-Fi menu support
- * for the rtw88 macOS port (Feixiao), mirroring OpenIntelWireless/itlwm's
- * AirportItlwm.
+ * for the rtw88 macOS port, following the established IO80211 controller
+ * model.
  *
  * This is a SEPARATE kext target from rtw88.kext (which stays IOEthernet-
- * based, like itlwm.kext), same as AirportItlwm.kext is separate from
- * itlwm.kext. Do not load both against the same PCI device.
+ * based, like other Wi-Fi kexts), and native IO80211 drivers stay separate from
+ * their Ethernet variants. Do not load both against the same PCI device.
  *
  * IOClass in this target's Info.plist should be RTL88WiFi, IOProviderClass
  * stays IOPCIDevice with the same IOPCIMatch entries as rtw88.kext.
@@ -31,10 +31,10 @@
 #include "RTW88AWDLManager.hpp"
 
 
-/* Ventura MacKernelSDK exposes APPLE80211_IOC_ROAM_PROFILE (216) but
+/* The Ventura kernel SDK exposes APPLE80211_IOC_ROAM_PROFILE (216) but
  * does not publish the corresponding payload type. Keep the ABI local
  * instead of depending on newer IO80211 headers. Layout matches the
- * legacy AirportItlwm payload and is exactly 76 bytes. */
+ * legacy reference-driver payload and is exactly 76 bytes. */
 struct RTW88RoamProfile {
     int8_t      flags;
     int8_t      trigger;
@@ -60,8 +60,8 @@ static_assert(sizeof(RTW88RoamProfileBandData) == 76,
               "RTW88 roam profile ABI must be 76 bytes");
 
 /* Ventura's public-ish header has the selector numbers below but omits a few
- * payload definitions that AirportItlwm v2.2.0 uses.  Keep private ABI shims
- * local to this driver rather than replacing MacKernelSDK with a newer header. */
+ * payload definitions that the reference IO80211 driver uses.  Keep private ABI shims
+ * local to this driver rather than replacing the kernel SDK with a newer header. */
 struct RTW88VHTMCSIndexSetData {
     uint32_t version;
     uint16_t mcs_map;
@@ -140,7 +140,7 @@ public:
 
     /* IO80211Controller — the actual Airport-style API surface.
      * Selector names/signatures must match the IO80211Family SDK headers
-     * (IO80211Controller.h) exactly — check MacKernelSDK version pinned
+     * (IO80211Controller.h) exactly — check the kernel SDK version pinned
      * in the repo, this list is representative, not exhaustive. */
     /* RTL88WiFi intentionally targets the Ventura IO80211FamilyLegacy ABI.
      * On Sonoma/Sequoia/Tahoe the supported configuration restores that same
@@ -170,7 +170,7 @@ public:
 #endif
 
     /* Association/security dispatch is owned by IO80211FamilyLegacy,
-     * matching AirportItlwm Ventura.  Do not override the family's internal split/Skywalk helpers here. */
+     * matching the reference Ventura IO80211 driver.  Do not override the family's internal split/Skywalk helpers here. */
 
     /* AWDL / P2P virtual interface ABI (Ventura IO80211FamilyLegacy). */
     virtual SInt32 apple80211VirtualRequest(UInt request_type, int request_number,
@@ -205,7 +205,7 @@ public:
     virtual void injectRxActionFrame(const uint8_t *frame, uint32_t len, int8_t rssi, uint16_t channel) override;
     virtual void injectRxAWDLFrame(mbuf_t m) override;
     virtual IOWorkLoop *getRxWorkLoop() override;
-    /* IONetworkController link-state contract used by AirportItlwm.  Defaults
+    /* IONetworkController link-state contract used by the reference IO80211 driver.  Defaults
      * are intentionally omitted here so the one-argument RTW88RxDelegate
      * overload remains unambiguous. */
     virtual bool setLinkStatus(UInt32 status, const IONetworkMedium *activeMedium,

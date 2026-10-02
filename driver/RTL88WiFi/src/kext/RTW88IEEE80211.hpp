@@ -1,4 +1,4 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * RTW88IEEE80211.hpp — 802.11 state machine for rtw88 macOS port.
  *
@@ -334,7 +334,7 @@ private:
     IOLock             *_lock         = nullptr;
 
     RTW88State          _state        = RTW88_STATE_IDLE;
-    /* Persistent IO80211 RUN latch.  net80211 (AirportItlwm) keeps its
+    /* Persistent IO80211 RUN latch.  net80211 (the reference IO80211 driver) keeps its
      * infrastructure state at IEEE80211_S_RUN from association completion
      * until a real deauth/disconnect.  rtw88 has extra transient internal
      * states, so keep that externally-visible RUN fact separately instead of
@@ -374,7 +374,7 @@ private:
     bool                _manualScanFallbackLogged = false;
 
     /* Association requested while the radio is still finishing a scan.
-     * AirportItlwm/net80211 accepts ASSOCIATE in SCAN and lets the state
+     * The reference IO80211 driver/net80211 accepts ASSOCIATE in SCAN and lets the state
      * machine continue into AUTH instead of returning EBUSY.  rtw88 has a
      * separate scan implementation, so preserve the request and start it as
      * soon as scanDone() returns the backend to IDLE. */

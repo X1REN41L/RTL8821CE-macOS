@@ -102,7 +102,7 @@ static inline u32 rtw_set32_mask_helper(u32 val, u32 mask, u32 data)
     return (val & ~mask) | ((data << __ffs(mask)) & mask);
 }
 
-/* fls is declared extern in MacKernelSDK's <libkern/libkern.h>; use it as-is.
+/* fls is declared extern in the kernel SDK's <libkern/libkern.h>; use it as-is.
  * fls64 is defined above; no re-definition here. */
 
 static inline unsigned int hweight8(unsigned int w)

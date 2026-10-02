@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * RTW88PCIDevice.hpp — IOEthernetController subclass for PCIe rtw88 chips.
  *
- * Approach mirrors itlwm: present a transparent Ethernet interface to macOS
+ * Approach mirrors the reference driver: present a transparent Ethernet interface to macOS
  * while doing 802.11 management internally.  The 802.11 state machine lives
  * in RTW88IEEE80211; this class handles IOKit life-cycle and the Ethernet
  * framing visible to macOS network stack.

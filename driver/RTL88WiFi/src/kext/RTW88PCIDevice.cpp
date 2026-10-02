@@ -1,4 +1,4 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 // RTW88PCIDevice.cpp — IOEthernetController for PCIe rtw88 adapters
 
@@ -731,7 +731,7 @@ void RTW88PCIDevice::injectRxFrame(mbuf_t m)
         return;
     }
 
-    /* Queue + flush, matching the proven itlwm submission path.  Submitting
+    /* Queue + flush, matching the proven the reference driver submission path.  Submitting
      * via the input queue keeps frame delivery off whatever thread called us. */
     _iface->inputPacket(m, 0, IONetworkInterface::kInputOptionQueuePacket);
     _iface->flushInputQueue();

@@ -1,9 +1,9 @@
-/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository SOURCE-NOTICES.md. */
+/* Modified by X1REN41L on 2026-10-02 for RTL88WiFi 1.0.0; see the repository NOTICE.md. */
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
  * RTL88WiFi 1.0.1 — Ventura IO80211 AWDL/P2P virtual-interface bridge.
  *
  * This file deliberately implements only payload ABIs present in the pinned
- * MacKernelSDK. Verified Ventura payload ABIs are handled explicitly. Unknown AWDL/P2P
+ * the kernel SDK. Verified Ventura payload ABIs are handled explicitly. Unknown AWDL/P2P
  * selectors stay unsupported rather than pretending a radio operation completed.
  */
 #include "RTL88WiFi.hpp"
@@ -122,7 +122,7 @@ SInt32 RTL88WiFi::disableVirtualInterface(IO80211VirtualInterface *interface)
     IOLog("RTL88WiFi: disableVirtualInterface role=%u bsd=%s\n",
           role, interface->getBSDName() ? interface->getBSDName() : "?");
 
-    /* Match AirportItlwm: let IO80211 tear the VIF down first, then publish
+    /* Match the reference IO80211 driver: let IO80211 tear the VIF down first, then publish
      * link-down only after the superclass accepted the transition. */
     SInt32 ret = super::disableVirtualInterface(interface);
     if (ret != kIOReturnSuccess)
@@ -163,7 +163,7 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
     bool set = request_type == SIOCSA80211;
     UInt role = interface ? (UInt)interface->getInterfaceRole() : 0;
 
-    /* Mirror AirportItlwm's architecture: IO80211 owns AWDL policy and the
+    /* Mirror the reference IO80211 driver's architecture: IO80211 owns AWDL policy and the
      * driver acts as its control-plane adapter. Keep a bounded record of which
      * Apple selectors have arrived; the Realtek scheduler alone owns physical
      * channel changes on the single PHY. */
@@ -334,9 +334,9 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
         auto *d = (apple80211_ht_capability *)data;
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
-        /* AirportItlwm master: element 45 + CBW20/40 + SGI20 + SGI40.
+        /* The reference IO80211 driver master: element 45 + CBW20/40 + SGI20 + SGI40.
          * The pinned header names these fields unk1/unk3 but the bundled
-         * AirportItlwm fixture confirms their exact offsets. */
+         * the reference IO80211 driver fixture confirms their exact offsets. */
         d->unk1 = 45;
         d->unk3 = 0x0062;
         IOLog("RTL88WiFi: AWDL HT_CAPABILITY cap=0x%x\n", d->unk3);
@@ -348,7 +348,7 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
         auto *d = (apple80211_vht_capability *)data;
         bzero(d, sizeof(*d));
         d->version = APPLE80211_VERSION;
-        d->cap = 3263; /* Match AirportItlwm's Ventura legacy path. */
+        d->cap = 3263; /* Match the reference IO80211 driver's Ventura legacy path. */
         IOLog("RTL88WiFi: AWDL VHT_CAPABILITY cap=%u\n", d->cap);
         return kIOReturnSuccess;
     }
@@ -399,7 +399,7 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
         return kIOReturnSuccess;
 
     case APPLE80211_IOC_P2P_SCAN: {
-        /* AirportItlwm accepts/logs this as part of virtual-interface service
+        /* The reference IO80211 driver accepts/logs this as part of virtual-interface service
          * initialization. Use Ventura's published apple80211_scan_data ABI,
          * but do not start a second concurrent STA scan from the VIF path. */
         if (!set || !data) return kIOReturnUnsupported;
@@ -414,7 +414,7 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
     }
 
     case APPLE80211_IOC_P2P_LISTEN:
-        /* AirportItlwm accepts this request. The pinned Ventura SDK does not
+        /* The reference IO80211 driver accepts this request. The pinned Ventura SDK does not
          * publish apple80211_p2p_listen_data, so keep the payload opaque. */
         if (!set) return kIOReturnUnsupported;
         IOLog("RTL88WiFi: P2P_LISTEN accepted (opaque Ventura ABI)\n");
@@ -550,7 +550,7 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
         if (set) _awdlManager->setDeviceCapabilities(d->cap);
         else {
             bzero(d, sizeof(*d)); d->version = APPLE80211_VERSION;
-            /* AirportItlwm reports CCA-stats capability. Its public fixture
+            /* The reference IO80211 driver reports CCA-stats capability. Its public fixture
              * uses bit 0 for this legacy capability. */
             d->cap = _awdlManager->deviceCapabilities();
             if (!d->cap) d->cap = 1;
@@ -567,7 +567,7 @@ SInt32 RTL88WiFi::handleAWDLVirtualRequest(UInt request_type, int request_number
     }
 
     case APPLE80211_IOC_AWDL_OOB_AUTO_REQUEST:
-        /* AirportItlwm only consumes this as a SET. The large private OOB
+        /* The reference IO80211 driver only consumes this as a SET. The large private OOB
          * payload is not needed for basic AWDL transport bring-up. */
         return set ? kIOReturnSuccess : kIOReturnUnsupported;
 
