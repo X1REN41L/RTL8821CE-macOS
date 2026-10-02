@@ -1,124 +1,128 @@
-# RTL8821CE-macOS — native Wi-Fi for Realtek rtw88 cards on Hackintosh
+# RTL8821CE-macOS
 
-Native AirPort-style Wi-Fi for the **Realtek RTL8821CE** on macOS Sonoma, using
-**AirPort_RTW88 2.0.1**. The card shows up as a normal Wi-Fi interface in the
-menu bar and System Settings, with no client app. SIP stays enabled.
+Native Wi-Fi for **Realtek RTL8821CE** (and the rest of the rtw88 PCIe family)
+on Hackintosh. The card works like a real Mac's AirPort card: it appears in the
+Wi-Fi menu and System Settings, remembers networks, auto-joins and reconnects
+after sleep. You don't need a client app, and SIP stays enabled.
 
-2.0.1 is my fork of xnoah222's AirPort_RTW88 2.0.0 (Realtek-AirPort-Family).
-It fixes WPA2 disconnects, slow throughput, sleep/wake reconnects and several
-memory-safety bugs. I use it daily on my own machine.
+Driver: **AirPort_RTW88 2.0.1**, daily-driven on macOS Sonoma 14.8.9.
 
 > [!WARNING]
-> This is an experimental kernel extension, tested on **one laptop with one
-> router**. Before changing your EFI, keep a working copy of your EFI on a USB
-> stick so you can still boot.
+> This is an experimental kernel extension, tested on one laptop with one
+> router. Keep a bootable copy of your current EFI on a USB stick before you
+> change anything.
+
+---
+
+## Before and after
+
+<p align="center">
+  <img src="docs/images/speedtest-2.0.1.png" alt="Speedtest on RTL8821CE with AirPort_RTW88 2.0.1: 93.40 Mbps down, 92.45 Mbps up, 7 ms ping" width="420"><br>
+  <b>🏆 RTL8821CE on macOS Sonoma: 93.4 Mbps down / 92.5 Mbps up, 7 ms ping. Full line speed over Wi-Fi.</b>
+</p>
+
+| | Before (AirPort_RTW88 2.0.0) | After (2.0.1, this repo) |
+|---|---|---|
+| **Connection** | Kept dropping and reconnecting | Stays connected |
+| **Download (5 GHz)** | 7.2 Mbps | **92.1 Mbps** (~13× faster) |
+| **Upload (5 GHz)** | 20.7 Mbps | **98.6 Mbps** (~5× faster) |
+| **2.4 GHz** | not measured | 41.7 Mbps down / 58.2 Mbps up |
+| **Responsiveness under load** | 1.9–2.5 s delays, ~25% of pings lost | ~5 ms, no loss |
+| **Sleep / wake** | not measured | Reconnects on its own in ~3 seconds |
+
+Measured with macOS `networkQuality` on a 100 Mbps internet line. Ethernet on
+the same line measured 82.7 down / 96.3 up, so Wi-Fi now runs at full line
+speed.
 
 ---
 
 ## Supported Wi-Fi chips
 
-Only PCIe cards are supported. USB and SDIO Realtek adapters are **not**.
+PCIe cards only. USB and SDIO Realtek adapters are **not** supported.
 
-| Chip | PCI ID | Status with 2.0.1 |
+| Chip | PCI ID | Status |
 |---|---|---|
-| **RTL8821CE** | `10ec:c821`, `10ec:b821` | ✅ **Tested**: daily use |
-| RTL8822BE | `10ec:b822` | ⚠️ Matched by the kext and firmware included, **untested** |
-| RTL8822CE | `10ec:c822`, `10ec:c82f` | ⚠️ Matched by the kext and firmware included, **untested** |
+| **RTL8821CE** | `10ec:c821`, `10ec:b821` | ✅ Tested, daily driver |
+| RTL8822BE | `10ec:b822` | ⚠️ Supported by the kext (firmware included), untested |
+| RTL8822CE | `10ec:c822`, `10ec:c82f` | ⚠️ Supported by the kext (firmware included), untested |
 
-To find your card's ID on macOS, run
-`ioreg -l | grep -iE '"vendor-id"|"device-id"'`, or look in Hackintool's
-**PCIe** tab. On Linux or Windows, use `lspci -nn` or Device Manager →
-Hardware IDs. Look for vendor `10ec`.
-
-Bluetooth on these combo cards is a separate USB device, and this project
-does **not** cover it.
+**Find your card's ID:** on macOS, look at Hackintool → **PCIe**, or run
+`ioreg -l | grep -iE '"vendor-id"|"device-id"'`. On Windows, use Device
+Manager → Hardware IDs. On Linux, use `lspci -nn`. Realtek's vendor ID is
+`10ec`.
 
 ## Supported macOS versions
 
-| macOS | Status with 2.0.1 |
+| macOS | Status |
 |---|---|
-| **Sonoma 14.8.9 (23J631)** | ✅ **Tested**: this guide |
-| Sonoma 14.4 and later | ⚠️ Expected to work, untested |
-| Sequoia 15, Tahoe 26 | ⚠️ Upstream 2.0.0 supports these with the same setup; 2.0.1 is untested |
-| Ventura 13.7.7 – 13.7.8 | ⚠️ Upstream uses only `AirPort_RTW88.kext` here (no Skywalk/AMFIPass, no block); untested |
-| Monterey 12 and older | ❌ Not supported by this kext |
-
-If you test 2.0.1 on another chip or macOS version, please open an issue with
-the result (see [Reporting results](#reporting-results)).
+| **Sonoma 14.8.9** | ✅ Tested, daily driver |
+| Sonoma 14.4 and later | ⚠️ Should work with this guide, untested |
+| Sequoia 15 / Tahoe 26 | ⚠️ Same kext setup as Sonoma, untested |
+| Ventura 13.7.7 – 13.7.8 | ⚠️ Use only `AirPort_RTW88.kext` (skip the other three kexts and the Block entry), untested |
+| Monterey 12 and older | ❌ Not supported |
 
 ---
 
 ## What works
 
-- WPA2-Personal (AES/CCMP)
+- WPA2-Personal (AES)
 - WPA3/WPA2 **transition** mode (connects as WPA2)
 - Open networks
-- 2.4 GHz and 5 GHz, including 80 MHz VHT on 5 GHz
-- Scanning, the Wi-Fi menu with signal strength, joining networks from the
-  menu, saved networks, auto-join and switching between networks
-- Group-key rekeys (no drops)
-- Sleep/wake (lid close and Apple menu → Sleep) with automatic reconnect
-- Works with SIP enabled; no root patching required
+- 2.4 GHz and 5 GHz (80 MHz on 5 GHz)
+- Wi-Fi menu, signal strength, joining, saved networks, auto-join, switching networks
+- Router key changes (group rekeys) without disconnects
+- Sleep/wake (lid and Apple menu → Sleep), with automatic reconnect
+- SIP enabled; no root patching
 
-## What doesn't work / known issues
+## What doesn't work
 
-- ❌ **WPA3-only (SAE)** networks
-- ❌ **WPA2/WPA3 Enterprise** (802.1X)
-- ❌ **Joining hidden SSIDs**
-- ❌ AirDrop, Continuity, Sidecar, Handoff and other AWDL features
-- ❌ Bluetooth (separate device, not covered)
-- ❔ WPA2 with TKIP (mixed mode) is untested
-- Cosmetic: after **some** wakes, macOS marks the connected network as
-  "hidden" in its saved profile. The connection itself is fine, and the next
-  normal join clears it.
-- On 2.4 GHz under a full-speed upload, the driver briefly throttles TX.
-  This is flow control, not a hang.
+- ❌ WPA3-only (SAE) networks
+- ❌ WPA2/WPA3 Enterprise (work/school logins)
+- ❌ Joining hidden networks
+- ❌ AirDrop, Continuity, Sidecar, Handoff (AWDL)
+- ❌ Bluetooth (a separate USB device on these cards; not covered here)
+- ❔ WPA2 with TKIP is untested
 
-## Results
+## Known issues
 
-Measured with `networkQuality` bound to the Wi-Fi interface. My internet line
-is capped at 100 Mbps.
-
-| | Down | Up |
-|---|---|---|
-| Stock 2.0.0, WPA2, 5 GHz | 7.2 Mbps | 20.7 Mbps |
-| **2.0.1, WPA2, 5 GHz (80 MHz)** | **92.1 Mbps** | **98.6 Mbps** |
-| **2.0.1, 2.4 GHz** | **41.7 Mbps** | **58.2 Mbps** |
-| Ethernet on the same line (reference) | 82.7 Mbps | 96.3 Mbps |
+- **Cosmetic "hidden network" label.** After some wakes or network switches,
+  macOS marks the connected network as "hidden" in its saved profile. The
+  connection itself is unaffected, and a later join clears the label.
+- **2.4 GHz full-speed upload.** The driver briefly throttles sending. This is
+  flow control, not a freeze.
 
 ---
 
-## Installation (macOS Sonoma, OpenCore)
+## Setup guide (OpenCore, macOS Sonoma)
 
-You need a working OpenCore EFI that already boots macOS and loads
-**Lilu.kext**. Use [ProperTree](https://github.com/corpnewt/ProperTree) to
-edit `config.plist`.
+### What you need
 
-### 1. Back up your EFI
+- A working OpenCore EFI that already boots macOS and loads **Lilu.kext**
+- [ProperTree](https://github.com/corpnewt/ProperTree) to edit `config.plist`
+- This repository: **Code → Download ZIP**
+
+### Step 1: back up your EFI
 
 Copy your whole `EFI` folder to a USB stick, and check that you can boot from
-that stick. If Wi-Fi setup goes wrong, boot from the stick and restore the
-folder.
+it. If anything goes wrong, boot from the stick and copy the folder back.
 
-### 2. Copy the kexts
+### Step 2: copy the kexts
 
-Download this repository (**Code → Download ZIP**). Copy these four kexts from
-[`Kexts/`](Kexts) to `EFI/OC/Kexts/`:
+Copy these four folders from [`Kexts/`](Kexts) into `EFI/OC/Kexts/`:
 
-| Kext | Version | Purpose |
+| Kext | Version | What it does |
 |---|---|---|
-| `AMFIPass.kext` | 1.4.1 | Lets the unsigned Wi-Fi kexts load with SIP enabled |
-| `IOSkywalkFamily.kext` | 1.0 | Older Skywalk networking stack needed by the legacy Wi-Fi family |
+| `AMFIPass.kext` | 1.4.1 | Lets the Wi-Fi kexts load with SIP enabled |
+| `IOSkywalkFamily.kext` | 1.0 | Older Apple networking stack needed by the legacy Wi-Fi family |
 | `IO80211FamilyLegacy.kext` | 1200.12.2b1 | Legacy Apple Wi-Fi family the driver plugs into |
 | `AirPort_RTW88.kext` | **2.0.1** | The Realtek driver (firmware is built in) |
 
-If you already use other Wi-Fi kexts (itlwm, AirportItlwm, a Broadcom
-patch set), disable them.
+Disable any other Wi-Fi kexts you were using (itlwm, AirportItlwm, Broadcom
+patches).
 
-### 3. Add the kexts to `Kernel → Add`
+### Step 3: `Kernel → Add`
 
-Add them **after Lilu**, in exactly this order. Every entry uses
-`Arch = Any`, `MinKernel = 23.0.0`, `MaxKernel` empty, and `Enabled = True`:
+Add the four kexts **after Lilu**, in exactly this order:
 
 | # | BundlePath | ExecutablePath | PlistPath |
 |---|---|---|---|
@@ -127,11 +131,15 @@ Add them **after Lilu**, in exactly this order. Every entry uses
 | 3 | `IO80211FamilyLegacy.kext` | `Contents/MacOS/IO80211FamilyLegacy` | `Contents/Info.plist` |
 | 4 | `AirPort_RTW88.kext` | `Contents/MacOS/AirPort_RTW88` | `Contents/Info.plist` |
 
-`IO80211FamilyLegacy.kext` contains an `AirPortBrcmNIC.kext` plugin. **Do not
-add it.** It is only for Broadcom cards. (ProperTree's OC Snapshot adds it
-automatically; delete or disable that entry afterwards.)
+For every entry, set `Arch = Any`, `MinKernel = 23.0.0`, leave `MaxKernel`
+empty, and set `Enabled = True`.
 
-### 4. Block the built-in IOSkywalkFamily (`Kernel → Block`)
+> [!IMPORTANT]
+> `IO80211FamilyLegacy.kext` contains an `AirPortBrcmNIC.kext` plugin. **Do
+> not add it**, because it is only for Broadcom cards. ProperTree's OC Snapshot
+> adds it automatically, so delete that entry afterwards.
+
+### Step 4: `Kernel → Block`
 
 Add one entry:
 
@@ -143,115 +151,112 @@ Add one entry:
 | MaxKernel | *(empty)* |
 | Arch | `Any` |
 | Enabled | `True` |
-| Comment | `Allow legacy Wi-Fi / block native Skywalk` |
 
-Without this block, macOS loads its own Skywalk stack and the Wi-Fi kexts
-cannot attach.
+Without this block, macOS loads its own networking stack and Wi-Fi won't
+appear.
 
-[`docs/opencore-wifi-snippet.plist`](docs/opencore-wifi-snippet.plist)
-contains steps 3 and 4 as plist XML that you can copy into ProperTree.
+**Shortcut:** [`docs/opencore-wifi-snippet.plist`](docs/opencore-wifi-snippet.plist)
+contains steps 3 and 4 ready to copy into ProperTree.
 
-### 5. Security settings
+### Step 5: security settings
 
-My working setup uses these:
+- `Misc → Security → SecureBootModel` = `Disabled`
+- SIP can stay **enabled** (`csr-active-config` = `00000000`)
+- No extra boot-args are needed
 
-- `Misc → Security → SecureBootModel = Disabled`. The standard Sonoma
-  legacy-Wi-Fi setup uses this, and it is what I tested.
-- SIP **enabled**: `csr-active-config = 00000000`. AMFIPass handles the
-  unsigned kexts, so SIP does not need to be disabled.
-- No extra boot-args are needed for Wi-Fi.
+### Step 6: validate and reboot
 
-### 6. Validate and reboot
-
-1. Save `config.plist` and run OpenCore's `ocvalidate` on it. It should
-   report no issues.
+1. Save `config.plist` and run OpenCore's `ocvalidate` on it. It should report
+   no issues.
 2. Reboot into macOS.
-3. After login, open the Wi-Fi menu, pick your network and enter the
-   password.
+3. Open the Wi-Fi menu, pick your network and enter the password.
 
-### 7. Check that it loaded
+### Step 7: check it loaded
 
 ```sh
 kextstat | grep -E 'rtw88|IO80211FamilyLegacy|IOSkywalk|AMFIPass'
 ```
 
-You should see `com.rtw88.airport (2.0.1)` together with
-`IO80211FamilyLegacy`, `IOSkywalkFamily` and `AMFIPass`. Under
-**System Settings → Network**, Wi-Fi should show as connected.
+You should see `com.rtw88.airport (2.0.1)` plus the other three. Wi-Fi shows
+as connected under **System Settings → Network**.
 
-### Recommended power settings (laptops)
+### Recommended for laptops
 
-Power Nap's dark wakes can make lid sleep look unreliable on OpenCore laptops
-(the power LED stays solid, or the lid only locks the screen). These settings
-fixed it on my machine:
+If closing the lid only locks the screen, or the sleep light stops blinking,
+turn off Power Nap and its related features. These are macOS dark wakes, not
+the Wi-Fi driver:
 
 ```sh
 sudo pmset -a powernap 0 proximitywake 0 standby 0 hibernatemode 0
 ```
 
+---
+
 ## Troubleshooting
 
-| Symptom | Check |
+| Problem | What to check |
 |---|---|
-| No Wi-Fi interface at all | Is the `Kernel → Block` entry present and enabled? Are all four kexts enabled, in the right order, with `MinKernel 23.0.0`? Run `kextstat` as in step 7. |
-| Boot stops / kernel panic right after adding the kexts | Boot from your backup USB EFI. Check that `AirPortBrcmNIC.kext` is **not** in `Kernel → Add` and that `SecureBootModel` is `Disabled`. |
-| Networks are visible but joining fails | WPA3-only, Enterprise and hidden networks are not supported. Set the router to WPA2-Personal (AES) or WPA2/WPA3 transition mode. |
-| Driver log | `ioreg -l -w0 \| grep DiagnosticLog` shows the driver's internal log ring. It contains no keys or packet payloads. |
-
-## Reporting results
-
-Please open an issue with:
-
-- your chip and PCI ID, laptop/board, and macOS version
-- the router's security mode (WPA2, WPA2/WPA3, …) and band
-- what works and what doesn't, including sleep/wake
-- the `kextstat` line from step 7
+| No Wi-Fi at all | The `Kernel → Block` entry exists and is enabled; all four kexts are enabled, in order, with `MinKernel 23.0.0`; run the step 7 command |
+| Panic or boot stops after adding the kexts | Boot from your backup USB. Make sure `AirPortBrcmNIC.kext` is **not** in `Kernel → Add` and `SecureBootModel` is `Disabled` |
+| Networks appear but joining fails | WPA3-only, Enterprise and hidden networks aren't supported. Set the router to WPA2-Personal (AES) or WPA2/WPA3 mixed mode |
+| Need the driver log | `ioreg -l -w0 \| grep DiagnosticLog` (contains no passwords or traffic) |
 
 ---
 
-## What changed in 2.0.1 (vs. AirPort_RTW88 2.0.0)
+## Building from source
 
-- **WPA2 handshake:** re-sends M4 on a duplicate M3, keeps the SNonce stable
-  across M1 retries, installs keys idempotently (CCMP packet numbers are
-  kept), uses correct M2/M4 fields, and supports group-key rekeys. This fixed
-  the deauth reason 15 disconnects.
-- **Memory safety:** a larger sk_buff control block (TX metadata overran it),
-  bounds checks in firmware decompression, and station lifetime fixes.
-- **Rates:** parses the AP's HT/VHT capabilities and intersects them with the
-  chip's (1T1R). This took 5 GHz from ~7 Mbps to line rate.
-- **macOS integration:** correct disconnect reasons. This fixes
-  "Dropped Connection reason=0" auto-join loops after manual joins and at
-  sleep. Also: Sonoma-ABI answers for CURRENT_NETWORK and AP_IE_LIST, and the
-  SSID is kept in scan results (no phantom "Hidden Network" entry).
-- **RX hardening:** drops undecrypted or plaintext frames on a protected link,
-  trims CCMP/TKIP trailers, and adds the FragAttacks A-MSDU check.
-- **Diagnostics:** an in-kernel log ring readable from IORegistry
-  (`DiagnosticLog`).
+The complete driver source is in [`driver/`](driver). You need Xcode or the
+Xcode Command Line Tools, and `python3`.
 
-The full source change is in
-[`source/AirPort_RTW88-2.0.1.patch`](source/AirPort_RTW88-2.0.1.patch). See
-[`source/BUILD.md`](source/BUILD.md) to build it yourself.
+```sh
+cd driver/Feixiao
+make airport
+```
 
-## My test setup
+The kext is written to `driver/Feixiao/build/out/AirPort_RTW88.kext`. The
+Realtek firmware in `driver/Feixiao/firmware/` is compressed into the kext
+during the build. Use `make airport` only: on Sonoma the kext must be loaded
+by OpenCore, not with `make install` or `make load`.
 
-- HP 15-da0003tu laptop, Intel i3-8130U, UHD 620, SMBIOS `MacBookPro14,1`
-- OpenCore 1.0.7, macOS Sonoma 14.8.9 (23J631)
-- Realtek RTL8821CE (`10ec:c821`)
-- Mercusys router, WPA2/WPA3 transition mode, 2.4 + 5 GHz
+Main changes from 2.0.0:
 
-## Credits
+- **WPA2:** correct handshake retries and key installation, plus group rekeys.
+  This fixes the constant disconnects.
+- **Speed:** the router's high-speed (HT/VHT) capabilities are read and used.
+  This took 5 GHz from about 7 Mbps to line rate.
+- **Stability:** memory-safety fixes (buffer overrun, firmware bounds checks,
+  station lifetime).
+- **macOS integration:** correct disconnect reasons (no auto-join loops after
+  manual joins or sleep), Sonoma-format network info, SSIDs kept in scan
+  results.
+- **Security:** undecrypted or plaintext frames on a protected link are
+  dropped, and the FragAttacks A-MSDU check is added.
+- **Diagnostics:** a built-in log readable via `ioreg` (`DiagnosticLog`).
 
-- **xnoah222**: [Realtek-AirPort-Family](https://github.com/xnoah222/Realtek-AirPort-Family)
-  / AirPort_RTW88 2.0.0, the base of this build
-- **thegwchr**: [Feixiao](https://github.com/thegwchr/Feixiao) and
-  [rtw88-stable](https://github.com/thegwchr/rtw88-stable), the macOS rtw88 port
-- The Linux **rtw88** developers and Realtek
-- **OpenIntelWireless** (itlwm/AirportItlwm), used as references by upstream
-- **Acidanthera** (Lilu, OpenCore), and the AMFIPass / IOSkywalkFamily /
-  IO80211FamilyLegacy work used by the OpenCore Legacy Patcher community
+---
 
-## Old development snapshot
+## Help test and develop
 
-The previous contents of this repository were my own unfinished rtw88
-reconstruction (the `rtw88ctl` driver), which had a TX throughput failure.
-They are kept unchanged in [`archive/`](archive).
+This repo is the baseline for RTL8821CE / rtw88 Wi-Fi on macOS. Reports and
+pull requests are welcome, especially for:
+
+- **RTL8822BE / RTL8822CE** cards
+- **Sequoia and Tahoe**
+- Other routers and security modes
+- Open items: WPA3-only (SAE), Enterprise, hidden networks, and the
+  "hidden network" label
+
+When you open an issue, include your **chip and PCI ID**, **laptop/board**,
+**macOS version**, **router security mode and band**, what works and what
+doesn't (including sleep/wake), and the step 7 output.
+
+## Test machine
+
+HP 15-da0003tu (i3-8130U, UHD 620), SMBIOS `MacBookPro14,1`, OpenCore 1.0.7,
+macOS Sonoma 14.8.9 (23J631), RTL8821CE, WPA2/WPA3 mixed-mode router.
+
+## Related repositories
+
+- https://github.com/xnoah222/Realtek-AirPort-Family
+- https://github.com/thegwchr/Feixiao
+- https://github.com/thegwchr/rtw88-stable

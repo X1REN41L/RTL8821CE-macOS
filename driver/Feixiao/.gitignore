@@ -1,0 +1,25 @@
+# macOS / Finder
+.DS_Store
+._*
+
+# Build products
+build/
+build-legacy/
+DerivedData/
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# Logs / diagnostics / temporary files
+*.log
+*.tmp
+*.swp
+
+# Local release/test archives
+*.zip
+*.patch
+
+# Python cache
+__pycache__/
+*.py[cod]
